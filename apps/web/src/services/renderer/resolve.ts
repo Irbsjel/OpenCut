@@ -53,7 +53,37 @@ import type {
 type ResolveContext = {
 	renderer: CanvasRenderer;
 	time: number;
+	hasActiveExemplifyingOverlay?: boolean;
 };
+
+function hasActiveExemplifyingOverlayAtTime(
+	rootNode: AnyBaseNode,
+	time: number,
+): boolean {
+	for (const child of rootNode.children) {
+		if (child instanceof ImageNode) {
+			const clipTime = time - child.params.timeOffset;
+			if (clipTime >= 0 && clipTime < child.params.duration) {
+				const isSubOverlay =
+					child.params.clipParams?.isSubtitleOverlay === true;
+				const scaleX = Number(
+					child.params.clipParams?.["transform.scaleX"] ??
+						child.params.transform?.scaleX ??
+						1,
+				);
+				if (isSubOverlay || scaleX < 0.95) {
+					return true;
+				}
+			}
+		} else if (child instanceof StickerNode) {
+			const clipTime = time - child.params.timeOffset;
+			if (clipTime >= 0 && clipTime < child.params.duration) {
+				return true;
+			}
+		}
+	}
+	return false;
+}
 
 export async function resolveRenderTree({
 	node,
@@ -64,11 +94,16 @@ export async function resolveRenderTree({
 	renderer: CanvasRenderer;
 	time: number;
 }): Promise<void> {
+	const hasActiveExemplifyingOverlay = hasActiveExemplifyingOverlayAtTime(
+		node,
+		time,
+	);
 	await resolveNode({
 		node,
 		context: {
 			renderer,
 			time,
+			hasActiveExemplifyingOverlay,
 		},
 	});
 }
@@ -390,6 +425,14 @@ function resolveTextNode({
 		context.time < node.params.startTime ||
 		context.time >= node.params.startTime + node.params.duration
 	) {
+		return null;
+	}
+
+	const isSubtitleNode =
+		node.params.params?.isSubtitle === true ||
+		(typeof node.params.name === "string" &&
+			node.params.name.startsWith("Subtítulo"));
+	if (isSubtitleNode && context.hasActiveExemplifyingOverlay) {
 		return null;
 	}
 
