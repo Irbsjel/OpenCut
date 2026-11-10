@@ -17,6 +17,8 @@ export type TextDecoration = "none" | "underline" | "line-through";
 
 export interface TextLayoutParams {
 	content: string;
+	/** Reduced scale only for isolated oversized subtitle words. */
+	lineScales?: number[];
 	fontSize: number;
 	fontFamily: string;
 	fontWeight: TextFontWeight;
@@ -39,6 +41,7 @@ export interface ResolvedTextLayout {
 
 export interface MeasuredTextLayout extends ResolvedTextLayout {
 	lines: string[];
+	lineFontStrings?: string[];
 	lineMetrics: TextMetrics[];
 	block: TextBlockMeasurement;
 }
@@ -53,7 +56,11 @@ export interface ResolvedTextBackgroundLike {
 	cornerRadius: number;
 }
 
-export function quoteFontFamily({ fontFamily }: { fontFamily: string }): string {
+export function quoteFontFamily({
+	fontFamily,
+}: {
+	fontFamily: string;
+}): string {
 	return `"${fontFamily.replace(/"/g, '\\"')}"`;
 }
 
@@ -122,7 +129,19 @@ export function measureTextLayout({
 		ctx,
 		letterSpacingPx: resolvedLayout.letterSpacing,
 	});
-	const lineMetrics = lines.map((line) => ctx.measureText(line));
+	const lineFontStrings = lines.map((_, index) => {
+		const scale = text.lineScales?.[index] ?? 1;
+		return buildTextFontString({
+			fontFamily: text.fontFamily,
+			fontWeight: text.fontWeight,
+			fontStyle: text.fontStyle,
+			scaledFontSize: resolvedLayout.scaledFontSize * scale,
+		});
+	});
+	const lineMetrics = lines.map((line, index) => {
+		ctx.font = lineFontStrings[index];
+		return ctx.measureText(line);
+	});
 	ctx.restore();
 
 	const block = measureTextBlock({
@@ -132,6 +151,7 @@ export function measureTextLayout({
 
 	return {
 		...resolvedLayout,
+		lineFontStrings,
 		lines,
 		lineMetrics,
 		block,
@@ -198,6 +218,7 @@ export function drawMeasuredTextLayout({
 	}
 
 	for (let index = 0; index < layout.lines.length; index++) {
+		ctx.font = layout.lineFontStrings?.[index] ?? layout.fontString;
 		const lineY = index * layout.lineHeightPx - layout.block.visualCenterOffset;
 		ctx.fillText(layout.lines[index], 0, lineY);
 		drawTextDecoration({
@@ -235,6 +256,7 @@ export function strokeMeasuredTextLayout({
 	setCanvasLetterSpacing({ ctx, letterSpacingPx: layout.letterSpacing });
 
 	for (let index = 0; index < layout.lines.length; index++) {
+		ctx.font = layout.lineFontStrings?.[index] ?? layout.fontString;
 		const lineY = index * layout.lineHeightPx - layout.block.visualCenterOffset;
 		ctx.strokeText(layout.lines[index], 0, lineY);
 	}

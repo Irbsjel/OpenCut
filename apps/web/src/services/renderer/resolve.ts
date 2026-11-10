@@ -502,7 +502,7 @@ function resolveTextNode({
 				typeof document !== "undefined" && document.fonts
 					? document.fonts.size
 					: 0;
-			const measurementKey = `${node.params.canvasHeight}|${loadedFontCount}|${node.params.params.content}|${node.params.params.fontFamily}|${node.params.params.fontSize}|${node.params.params.fontWeight}|${node.params.params.fontStyle}|${node.params.params.letterSpacing}|${node.params.params.lineHeight}|${node.params.params["background.enabled"]}|${node.params.params["background.paddingX"]}|${node.params.params["background.paddingY"]}|${node.params.params["background.cornerRadius"]}`;
+			const measurementKey = `${node.params.canvasHeight}|${loadedFontCount}|${node.params.params.content}|${node.params.params.subtitleLineScales}|${node.params.params.fontFamily}|${node.params.params.fontSize}|${node.params.params.fontWeight}|${node.params.params.fontStyle}|${node.params.params.letterSpacing}|${node.params.params.lineHeight}|${node.params.params["background.enabled"]}|${node.params.params["background.paddingX"]}|${node.params.params["background.paddingY"]}|${node.params.params["background.cornerRadius"]}`;
 			if (!hasAnims) {
 				if (
 					!node.cachedStaticMeasurement ||

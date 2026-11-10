@@ -236,6 +236,7 @@ export function drawAnimatedTextLayout({
 		style === "typewriter-pro" ? Math.floor(t * 14) : totalChars;
 
 	for (let lineIdx = 0; lineIdx < layout.lines.length; lineIdx++) {
+		ctx.font = layout.lineFontStrings?.[lineIdx] ?? layout.fontString;
 		const chars = lineGraphemes[lineIdx];
 		if (chars.length === 0) continue;
 
@@ -569,7 +570,10 @@ function drawWordKaraokeLayout({
 		let matched = -1;
 		for (let i = 0; i < wordTimings.length; i++) {
 			const wt = wordTimings[i]!;
-			if (localTimeSec >= wt.startOffset - 0.04 && localTimeSec <= wt.endOffset + 0.06) {
+			if (
+				localTimeSec >= wt.startOffset - 0.04 &&
+				localTimeSec <= wt.endOffset + 0.06
+			) {
 				matched = i;
 				const span = Math.max(0.06, wt.endOffset - wt.startOffset);
 				wordSubProgress = clamp({
@@ -606,12 +610,12 @@ function drawWordKaraokeLayout({
 	const popScale =
 		1 + Math.sin(Math.min(1, wordSubProgress * 2.2) * Math.PI) * 0.16 * amp;
 	const isHighlightMode = animation.karaokeMode === "highlight";
-	const strokeW =
-		(animation.strokeWidth ?? 0) * (layout.scaledFontSize / 48);
+	const strokeW = (animation.strokeWidth ?? 0) * (layout.scaledFontSize / 48);
 
 	let currentWordCounter = 0;
 
 	for (let lineIdx = 0; lineIdx < layout.lines.length; lineIdx++) {
+		ctx.font = layout.lineFontStrings?.[lineIdx] ?? layout.fontString;
 		const tokens = lineTokens[lineIdx];
 		const lineY =
 			lineIdx * layout.lineHeightPx - layout.block.visualCenterOffset;
@@ -682,9 +686,7 @@ function drawWordKaraokeLayout({
 					ctx.restore();
 				}
 				ctx.fillStyle =
-					isActive && isHighlightMode
-						? accentColor || "#facc15"
-						: textColor;
+					isActive && isHighlightMode ? accentColor || "#facc15" : textColor;
 				ctx.globalAlpha = isActive ? 1 : isPast ? 0.96 : 0.82;
 				ctx.fillText(tok, 0, 0);
 			}

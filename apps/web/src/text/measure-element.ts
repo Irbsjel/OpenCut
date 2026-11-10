@@ -3,9 +3,7 @@ import { DEFAULTS } from "@/timeline/defaults";
 import type { TextElement } from "@/timeline";
 import type { TextBackground } from "@/text/background";
 import { resolveNumberAtTime } from "@/animation/values";
-import {
-	getTextVisualRect,
-} from "./layout";
+import { getTextVisualRect } from "./layout";
 import {
 	measureTextLayout,
 	type MeasuredTextLayout,
@@ -135,6 +133,7 @@ export function buildTextLayoutParamsFromElement({
 	element: TextElement;
 }): TextLayoutParams {
 	return {
+		lineScales: readSubtitleLineScales(element.params),
 		content: readStringParam({
 			params: element.params,
 			key: "content",
@@ -304,4 +303,40 @@ function readTextDecoration({
 	return value === "none" || value === "underline" || value === "line-through"
 		? value
 		: fallback;
+}
+
+function readSubtitleLineScales(
+	params: TextElement["params"],
+): number[] | undefined {
+	if (
+		params.isSubtitle !== true ||
+		typeof params.subtitleLineScales !== "string"
+	)
+		return undefined;
+	try {
+		const data = JSON.parse(params.subtitleLineScales) as {
+			content?: unknown;
+			scales?: unknown;
+		};
+		if (!data || data.content !== params.content) return undefined;
+		const scales = data.scales;
+		if (
+			Array.isArray(scales) &&
+			scales.every(
+				(scale) =>
+					typeof scale === "number" &&
+					Number.isFinite(scale) &&
+					scale > 0 &&
+					scale <= 1,
+			)
+		) {
+			const lines = String(params.content).split("\n");
+			return scales.map((scale, index) =>
+				scale < 1 && lines[index]?.trim().split(/\s+/).length !== 1 ? 1 : scale,
+			);
+		}
+	} catch {
+		/* Invalid or obsolete metadata uses the original font size. */
+	}
+	return undefined;
 }

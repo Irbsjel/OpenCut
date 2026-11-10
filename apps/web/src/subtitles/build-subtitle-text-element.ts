@@ -1,3 +1,4 @@
+import { fitSubtitleLayout } from "./fit-layout";
 import { FONT_SIZE_SCALE_REFERENCE } from "@/text/typography";
 import {
 	getTextVisualRect,
@@ -16,7 +17,6 @@ import type {
 } from "@/text/primitives";
 import type { SubtitleCue, SubtitleStyleOverrides } from "./types";
 
-const SUBTITLE_MAX_WIDTH_RATIO = 0.8;
 const SUBTITLE_BOTTOM_MARGIN_RATIO = 0.05;
 const SUBTITLE_FONT_SIZE = 5;
 const MEASUREMENT_CANVAS_SIZE = 4096;
@@ -32,58 +32,6 @@ function createMeasurementContext(): CanvasRenderingContext2D | null {
 	return canvas.getContext("2d");
 }
 
-function measureLineWidth({
-	ctx,
-	text,
-}: {
-	ctx: CanvasRenderingContext2D;
-	text: string;
-}): number {
-	return ctx.measureText(text).width;
-}
-
-function wrapSubtitleText({
-	ctx,
-	text,
-	maxWidth,
-}: {
-	ctx: CanvasRenderingContext2D;
-	text: string;
-	maxWidth: number;
-}): string {
-	const normalized = text.trim().replace(/\r\n/g, "\n");
-	const paragraphs = normalized.split("\n");
-	const wrappedParagraphs: string[] = [];
-
-	for (const paragraph of paragraphs) {
-		const trimmedParagraph = paragraph.trim();
-		if (!trimmedParagraph) {
-			wrappedParagraphs.push("");
-			continue;
-		}
-
-		const words = trimmedParagraph.split(/\s+/);
-		let currentLine = words[0] ?? "";
-		const lines: string[] = [];
-
-		for (let i = 1; i < words.length; i++) {
-			const nextLine = `${currentLine} ${words[i]}`;
-			if (measureLineWidth({ ctx, text: nextLine }) <= maxWidth) {
-				currentLine = nextLine;
-				continue;
-			}
-
-			lines.push(currentLine);
-			currentLine = words[i];
-		}
-
-		lines.push(currentLine);
-		wrappedParagraphs.push(lines.join("\n"));
-	}
-
-	return wrappedParagraphs.join("\n");
-}
-
 function measureWrappedTextBlock({
 	ctx,
 	content,
@@ -92,6 +40,7 @@ function measureWrappedTextBlock({
 	background,
 	fontSize,
 	lineHeight,
+	lineScales,
 }: {
 	ctx: CanvasRenderingContext2D;
 	content: string;
@@ -100,11 +49,15 @@ function measureWrappedTextBlock({
 	background: TextBackground;
 	fontSize: number;
 	lineHeight: number;
+	lineScales?: number[];
 }) {
 	const scaledFontSize = fontSize * (canvasHeight / FONT_SIZE_SCALE_REFERENCE);
 	const lineHeightPx = lineHeight * scaledFontSize;
 	const lines = content.split("\n");
-	const lineMetrics = lines.map((line) => ctx.measureText(line));
+	const lineMetrics = lines.map((line, index) => {
+		const metrics = ctx.measureText(line);
+		return { width: metrics.width * (lineScales?.[index] ?? 1) } as TextMetrics;
+	});
 
 	const block = measureTextBlock({
 		lineMetrics,
@@ -176,15 +129,9 @@ function resolveTargetWidth({
 	canvasWidth: number;
 	placement: ReturnType<typeof resolveSubtitleStyle>["placement"];
 }): number {
-	const leftRatio = placement.marginLeftRatio ?? 0;
-	const rightRatio = placement.marginRightRatio ?? 0;
-	const hasExplicitMargins = leftRatio > 0 || rightRatio > 0;
-	if (!hasExplicitMargins) {
-		return canvasWidth * SUBTITLE_MAX_WIDTH_RATIO;
-	}
-
-	const availableWidth = canvasWidth * (1 - leftRatio - rightRatio);
-	return Math.max(0, availableWidth);
+	const leftRatio = Math.max(0.1, placement.marginLeftRatio ?? 0.1);
+	const rightRatio = Math.max(0.1, placement.marginRightRatio ?? 0.1);
+	return Math.max(1, canvasWidth * (1 - leftRatio - rightRatio));
 }
 
 function resolvePositionX({
@@ -198,8 +145,10 @@ function resolvePositionX({
 	placement: ReturnType<typeof resolveSubtitleStyle>["placement"];
 	visualRect: { left: number; width: number };
 }): number {
-	const leftMargin = canvasWidth * (placement.marginLeftRatio ?? 0);
-	const rightMargin = canvasWidth * (placement.marginRightRatio ?? 0);
+	const leftMargin =
+		canvasWidth * Math.max(0.1, placement.marginLeftRatio ?? 0.1);
+	const rightMargin =
+		canvasWidth * Math.max(0.1, placement.marginRightRatio ?? 0.1);
 	const canvasCenterX = canvasWidth / 2;
 
 	if (textAlign === "left") {
@@ -287,6 +236,7 @@ export function buildSubtitleTextElement({
 		animOut: string;
 		animOutDuration: number;
 		letterAnimation: string;
+		karaokeMode?: string;
 	};
 	verticalAlign?: "top" | "middle" | "bottom";
 }): CreateTextElement {
@@ -340,21 +290,37 @@ export function buildSubtitleTextElement({
 		placement: style.placement,
 	});
 
-	const rawText = preset?.uppercase
-		? caption.text.toUpperCase()
-		: caption.text;
+	const rawText = preset?.uppercase ? caption.text.toUpperCase() : caption.text;
 	let content = rawText;
 	let positionX = 0;
 	let positionY = 0;
+	let subtitleLineScales: number[] = [];
 
 	if (ctx) {
 		ctx.font = fontString;
 		setCanvasLetterSpacing({ ctx, letterSpacingPx: style.letterSpacing });
-		content = wrapSubtitleText({
+		const fitted = fitSubtitleLayout({
 			ctx,
 			text: rawText,
+			fontFamily: style.fontFamily,
+			fontWeight,
+			fontStyle,
+			fontSize: style.fontSize,
+			canvasSize,
 			maxWidth,
+			lineHeight: style.lineHeight,
+			letterSpacing: style.letterSpacing,
+			strokeWidth: preset?.strokeWidth ?? 5,
+			shadowBlur: preset?.shadowBlur ?? 10,
+			paddingX: style.background.enabled ? style.background.paddingX : 0,
+			paddingY: style.background.enabled ? style.background.paddingY : 0,
 		});
+		if (!fitted.fits)
+			throw new Error(
+				"El subtítulo es demasiado largo para la zona segura. Divídelo en segmentos más cortos.",
+			);
+		content = fitted.content;
+		subtitleLineScales = fitted.lineScales;
 		const measurement = measureWrappedTextBlock({
 			ctx,
 			content,
@@ -363,17 +329,24 @@ export function buildSubtitleTextElement({
 			background: style.background,
 			fontSize: style.fontSize,
 			lineHeight: style.lineHeight,
+			lineScales: fitted.lineScales,
 		});
+		const safeRect = {
+			left: measurement.visualRect.left - fitted.inset,
+			top: measurement.visualRect.top - fitted.inset,
+			width: measurement.visualRect.width + fitted.inset * 2,
+			height: measurement.visualRect.height + fitted.inset * 2,
+		};
 		positionX = resolvePositionX({
 			canvasWidth: canvasSize.width,
 			textAlign: style.textAlign,
 			placement: style.placement,
-			visualRect: measurement.visualRect,
+			visualRect: safeRect,
 		});
 		positionY = resolvePositionY({
 			canvasHeight: canvasSize.height,
 			placement: style.placement,
-			visualRect: measurement.visualRect,
+			visualRect: safeRect,
 		});
 	}
 
@@ -422,6 +395,10 @@ export function buildSubtitleTextElement({
 			"transform.positionX": positionX,
 			"transform.positionY": positionY,
 			isSubtitle: true,
+			subtitleLineScales: JSON.stringify({
+				content,
+				scales: subtitleLineScales,
+			}),
 			presetId: preset?.id ?? "hormozi",
 			strokeWidth: preset?.strokeWidth ?? 5,
 			strokeColor: preset?.strokeColor ?? "#000000",
