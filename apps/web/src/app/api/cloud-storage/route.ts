@@ -331,6 +331,23 @@ export async function GET(req: NextRequest) {
 	try {
 		const { projectsDir } = await ensureDirs();
 		const id = req.nextUrl.searchParams.get("id");
+
+		if (id) {
+			const safeId = sanitizeId(id);
+			try {
+				const raw = await fs.readFile(
+					path.join(projectsDir, `${safeId}.json`),
+					"utf8",
+				);
+				const parsed = JSON.parse(raw) as CloudProjectBundle;
+				if (parsed?.project?.metadata?.id) {
+					return NextResponse.json(enrichBundleMetadata(parsed));
+				}
+			} catch {
+				// fall through to full scan if filename differs from metadata.id
+			}
+		}
+
 		const all = await readAllServerBundles(projectsDir);
 
 		if (id) {
