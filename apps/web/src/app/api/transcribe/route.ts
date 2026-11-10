@@ -42,6 +42,7 @@ function resolveMediaPoolFile(mediaId: string): string | null {
 		process.env.OPENCUT_CLOUD_DIR,
 		path.resolve(process.cwd(), "../../cloud-storage"),
 		path.join(home, "active/opencut/cloud-storage"),
+		path.join(home, "sistema/tools/opencut/cloud-storage"),
 	].filter((r): r is string => Boolean(r));
 
 	for (const root of roots) {
@@ -75,6 +76,10 @@ function resolveScriptPath(): string {
 		path.resolve(process.cwd(), "scripts/transcribe_whisper.py"),
 		path.resolve(process.cwd(), "apps/web/scripts/transcribe_whisper.py"),
 		path.join(home, "active/opencut/apps/web/scripts/transcribe_whisper.py"),
+		path.join(
+			home,
+			"sistema/tools/opencut/apps/web/scripts/transcribe_whisper.py",
+		),
 	];
 	for (const candidate of candidates) {
 		if (existsSync(candidate)) {
@@ -342,10 +347,9 @@ async function transcribeSingleChunkWithFallback({
 			: "Detect the spoken language automatically.";
 
 	const models = [
-		"gemini-flash-lite-latest",
-		"gemini-2.5-flash",
 		"gemini-3.1-flash-lite-preview",
 		"gemini-3-flash-preview",
+		"gemini-flash-lite-latest",
 	];
 
 	for (const apiKey of geminiKeys) {
@@ -365,7 +369,7 @@ async function transcribeSingleChunkWithFallback({
 								{
 									text:
 										`Transcribe ALL spoken words in this audio chunk from start (0.0s) to the end of the chunk with accurate start and end timestamps in seconds relative to this chunk. ` +
-										`${langHint} Break sentences into short natural phrases of 3 to 6 words. If there is no speech at all (only silence or music without vocals), return {"language":"es","segments":[]}. ` +
+										`${langHint} Break sentences into short natural phrases of 3 to 6 words. Do NOT skip any sentence or phrase. If there is no speech at all (only silence or music without vocals), return {"language":"es","segments":[]}. ` +
 										`Return ONLY valid JSON: {"language": "es", "segments": [{"start": 0.0, "end": 1.8, "text": "..."}]}`,
 								},
 							],
@@ -374,7 +378,10 @@ async function transcribeSingleChunkWithFallback({
 					generationConfig: {
 						responseMimeType: "application/json",
 						temperature: 0.0,
-						maxOutputTokens: 2048,
+						maxOutputTokens: 8192,
+						...(model.startsWith("gemini-3") && {
+							thinkingConfig: { thinkingBudget: 0 },
+						}),
 					},
 				};
 
@@ -396,10 +403,12 @@ async function transcribeSingleChunkWithFallback({
 
 				const data = (await resp.json()) as {
 					candidates?: Array<{
+						finishReason?: string;
 						content?: { parts?: Array<{ text?: string; thought?: boolean }> };
 					}>;
 				};
-				const parts = data.candidates?.[0]?.content?.parts ?? [];
+				const candidate = data.candidates?.[0];
+				const parts = candidate?.content?.parts ?? [];
 				const rawJsonText = parts
 					.filter((p) => !p.thought)
 					.map((p) => p.text ?? "")
@@ -410,13 +419,19 @@ async function transcribeSingleChunkWithFallback({
 				const parsed = parseSegmentsResiliently(rawJsonText);
 				if (!parsed) continue;
 
+				const normalized = normalizeChunkSegments({
+					rawSegments: parsed.segments,
+					timeOffsetSec,
+					maxEndSec,
+				});
+				// If the model truncated or returned 0 segments on a non-silent chunk, try next model / Whisper
+				if (normalized.length === 0 || candidate?.finishReason === "MAX_TOKENS") {
+					continue;
+				}
+
 				return {
 					language: parsed.language,
-					segments: normalizeChunkSegments({
-						rawSegments: parsed.segments,
-						timeOffsetSec,
-						maxEndSec,
-					}),
+					segments: normalized,
 				};
 			} catch {
 				// try next model in Sinaí pool

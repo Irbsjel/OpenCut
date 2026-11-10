@@ -104,10 +104,9 @@ function getKeyPoolPaths(): string[] {
 }
 
 const GEMINI_MODELS = [
-	"gemini-flash-lite-latest",
-	"gemini-2.5-flash",
 	"gemini-3.1-flash-lite-preview",
 	"gemini-3-flash-preview",
+	"gemini-flash-lite-latest",
 	"gemma-4-26b-a4b-it",
 ];
 
@@ -279,7 +278,10 @@ async function querySinaiPoolJson({
 						generationConfig: {
 							responseMimeType: "application/json",
 							temperature: 0.25,
-							maxOutputTokens: 1600,
+							maxOutputTokens: 4096,
+							...(model.startsWith("gemini-3") && {
+								thinkingConfig: { thinkingBudget: 0 },
+							}),
 						},
 					}),
 					signal: controller.signal,
