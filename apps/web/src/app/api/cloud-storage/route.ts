@@ -169,6 +169,9 @@ function enrichBundleMetadata(bundle: CloudProjectBundle): CloudProjectBundle {
 				)
 				.sort((a, b) => (a.startTime ?? 0) - (b.startTime ?? 0));
 		}
+		const canvasHeight = project.settings?.canvasSize?.height || 720;
+		const bottomCenterY = Math.round(canvasHeight * 0.28);
+
 		for (const track of tracks.overlay ?? []) {
 			if (track.type === "video" && Array.isArray(track.elements)) {
 				for (const el of track.elements) {
@@ -180,6 +183,19 @@ function enrichBundleMetadata(bundle: CloudProjectBundle): CloudProjectBundle {
 					params.isSubtitleOverlay = true;
 					params.animationPreset =
 						(params.animationPreset as string) || "zoom-in-pop";
+					if (
+						params["transform.positionY"] === undefined ||
+						params["transform.positionY"] === 0
+					) {
+						params["transform.positionY"] = bottomCenterY;
+					}
+					if (
+						typeof params["transform.scaleX"] !== "number" ||
+						(params["transform.scaleX"] as number) > 0.3
+					) {
+						params["transform.scaleX"] = 0.25;
+						params["transform.scaleY"] = 0.25;
+					}
 					if (upg) {
 						(el as { mediaId: string }).mediaId = upg.newId;
 						el.name = upg.name;

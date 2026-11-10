@@ -36,6 +36,14 @@ export interface ResolvedTextNodeState {
 export class TextNode extends BaseNode<TextNodeParams, ResolvedTextNodeState> {
 	cachedStaticMeasurement: MeasuredTextElement | null = null;
 	cachedMeasurementKey: string | null = null;
+	cachedWordTimingsRaw: unknown = null;
+	cachedWordTimings:
+		| Array<{
+				word: string;
+				startOffset: number;
+				endOffset: number;
+		  }>
+		| undefined = undefined;
 }
 
 export function renderTextToContext({

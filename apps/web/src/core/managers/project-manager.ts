@@ -729,7 +729,21 @@ export class ProjectManager {
 			targetCanvas: tempCanvas,
 		});
 
-		const thumbnailDataUrl = tempCanvas.toDataURL("image/png");
+		const maxThumbW = 320;
+		const scale = Math.min(1, maxThumbW / Math.max(1, tempCanvas.width));
+		const thumbW = Math.max(16, Math.round(tempCanvas.width * scale));
+		const thumbH = Math.max(16, Math.round(tempCanvas.height * scale));
+		const thumbCanvas = document.createElement("canvas");
+		thumbCanvas.width = thumbW;
+		thumbCanvas.height = thumbH;
+		const thumbCtx = thumbCanvas.getContext("2d");
+		if (thumbCtx) {
+			thumbCtx.drawImage(tempCanvas, 0, 0, thumbW, thumbH);
+		}
+		const thumbnailDataUrl = (thumbCtx ? thumbCanvas : tempCanvas).toDataURL(
+			"image/jpeg",
+			0.72,
+		);
 
 		await this.updateThumbnail({ thumbnail: thumbnailDataUrl });
 		return true;

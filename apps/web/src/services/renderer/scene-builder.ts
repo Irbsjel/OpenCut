@@ -45,6 +45,31 @@ function buildTrackNodes({
 }): AnyBaseNode[] {
 	const nodes: AnyBaseNode[] = [];
 
+	// Collect all active contextual overlay image intervals so subtitle text nodes
+	// are strictly suppressed whenever an overlay image is visible ("cuando haya imágenes que no haya subtítulos")
+	const overlayImageIntervals: Array<{ start: number; end: number }> = [];
+	for (const track of tracks) {
+		if (track.id === "main-track") continue;
+		const visibleEls = getVisibleSortedElements({ track });
+		for (const el of visibleEls) {
+			if (el.type !== "image") continue;
+			const isContextualImg =
+				el.params?.isSubtitleOverlay === true ||
+				(typeof el.name === "string" &&
+					(el.name.startsWith("Imagen IA") ||
+						el.name.startsWith("Meme") ||
+						el.name.startsWith("Sticker") ||
+						el.name.startsWith("Contexto") ||
+						el.name.startsWith("Cuadro")));
+			if (isContextualImg || track.type === "video") {
+				overlayImageIntervals.push({
+					start: el.startTime,
+					end: el.startTime + el.duration,
+				});
+			}
+		}
+	}
+
 	for (const track of tracks) {
 		const elements = getVisibleSortedElements({ track });
 
@@ -137,18 +162,74 @@ function buildTrackNodes({
 			}
 
 			if (element.type === "text") {
-				nodes.push(
-					new TextNode({
-						...element,
-						transform: buildTransformFromParams({ params: element.params }),
-						opacity: readOpacityFromParams({ params: element.params }),
-						blendMode: readBlendModeFromParams({ params: element.params }),
-						canvasCenter: { x: canvasSize.width / 2, y: canvasSize.height / 2 },
-						canvasHeight: canvasSize.height,
-						textBaseline: "middle",
-						effects: element.effects ?? [],
-					}),
-				);
+				const isSubtitleEl =
+					element.params?.isSubtitle === true ||
+					(typeof element.name === "string" &&
+						(element.name.startsWith("Subtítulo") ||
+							element.name.startsWith("Caption")));
+
+				if (isSubtitleEl && overlayImageIntervals.length > 0) {
+					let segments: Array<{ start: number; end: number }> = [
+						{
+							start: element.startTime,
+							end: element.startTime + element.duration,
+						},
+					];
+					for (const imgRange of overlayImageIntervals) {
+						const nextSegments: Array<{ start: number; end: number }> = [];
+						for (const seg of segments) {
+							if (imgRange.end <= seg.start || imgRange.start >= seg.end) {
+								nextSegments.push(seg);
+								continue;
+							}
+							if (imgRange.start > seg.start) {
+								nextSegments.push({ start: seg.start, end: imgRange.start });
+							}
+							if (imgRange.end < seg.end) {
+								nextSegments.push({ start: imgRange.end, end: seg.end });
+							}
+						}
+						segments = nextSegments;
+					}
+					const validSegments = segments.filter(
+						(seg) => seg.end - seg.start >= 26_400,
+					);
+					for (const seg of validSegments) {
+						nodes.push(
+							new TextNode({
+								...element,
+								startTime: seg.start as typeof element.startTime,
+								duration: (seg.end - seg.start) as typeof element.duration,
+								transform: buildTransformFromParams({ params: element.params }),
+								opacity: readOpacityFromParams({ params: element.params }),
+								blendMode: readBlendModeFromParams({ params: element.params }),
+								canvasCenter: {
+									x: canvasSize.width / 2,
+									y: canvasSize.height / 2,
+								},
+								canvasHeight: canvasSize.height,
+								textBaseline: "middle",
+								effects: element.effects ?? [],
+							}),
+						);
+					}
+				} else {
+					nodes.push(
+						new TextNode({
+							...element,
+							transform: buildTransformFromParams({ params: element.params }),
+							opacity: readOpacityFromParams({ params: element.params }),
+							blendMode: readBlendModeFromParams({ params: element.params }),
+							canvasCenter: {
+								x: canvasSize.width / 2,
+								y: canvasSize.height / 2,
+							},
+							canvasHeight: canvasSize.height,
+							textBaseline: "middle",
+							effects: element.effects ?? [],
+						}),
+					);
+				}
 			}
 
 			if (element.type === "sticker") {

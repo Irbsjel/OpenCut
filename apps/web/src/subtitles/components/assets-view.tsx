@@ -604,7 +604,7 @@ export function Captions() {
 			name,
 			startTimeSec,
 			durationSec,
-			scale = 0.34,
+			scale = 0.25,
 		}: {
 			file: File;
 			name: string;
@@ -617,6 +617,11 @@ export function Captions() {
 			const processed = await processMediaAssets({ files: [file] });
 			const animParams = resolveOverlayAnimationParams(overlayImageAnimation);
 			const effectiveDurSec = Math.min(3.2, Math.max(1.5, durationSec));
+			const canvasHeight = proj.settings?.canvasSize?.height || 720;
+			const targetPositionY =
+				verticalAlign === "top"
+					? -Math.round(canvasHeight * 0.28)
+					: Math.round(canvasHeight * 0.28);
 
 			for (const assetItem of processed) {
 				const saved = await editor.media.addMediaAsset({
@@ -641,13 +646,70 @@ export function Captions() {
 						"transform.scaleX": scale,
 						"transform.scaleY": scale,
 						"transform.positionX": 0,
-						"transform.positionY": 0,
+						"transform.positionY": targetPositionY,
 						isSubtitleOverlay: true,
 						...animParams,
 					};
 				}
 
 				const scene = editor.scenes.getActiveSceneOrNull();
+				if (scene?.tracks?.overlay) {
+					const imgStart = startTimeSec;
+					const imgEnd = startTimeSec + effectiveDurSec;
+					const subsToDelete: Array<{ trackId: string; elementId: string }> =
+						[];
+					const subsToUpdate: Array<{
+						trackId: string;
+						elementId: string;
+						patch: Partial<TimelineElement>;
+					}> = [];
+					for (const tr of scene.tracks.overlay) {
+						if (tr.type !== "text") continue;
+						for (const subEl of tr.elements) {
+							if (subEl.type !== "text" || subEl.params?.isSubtitle !== true) {
+								continue;
+							}
+							const subStart = mediaTimeToSeconds({ time: subEl.startTime });
+							const subDur = mediaTimeToSeconds({ time: subEl.duration });
+							const subEnd = subStart + subDur;
+							if (subEnd <= imgStart + 0.04 || subStart >= imgEnd - 0.04) {
+								continue;
+							}
+							const beforeDur = imgStart - subStart;
+							const afterDur = subEnd - imgEnd;
+							if (beforeDur >= 0.45 && beforeDur >= afterDur) {
+								subsToUpdate.push({
+									trackId: tr.id,
+									elementId: subEl.id,
+									patch: {
+										duration: mediaTimeFromSeconds({ seconds: beforeDur }),
+									},
+								});
+							} else if (afterDur >= 0.45) {
+								subsToUpdate.push({
+									trackId: tr.id,
+									elementId: subEl.id,
+									patch: {
+										startTime: mediaTimeFromSeconds({ seconds: imgEnd }),
+										duration: mediaTimeFromSeconds({ seconds: afterDur }),
+									},
+								});
+							} else {
+								subsToDelete.push({ trackId: tr.id, elementId: subEl.id });
+							}
+						}
+					}
+					if (subsToUpdate.length > 0) {
+						editor.timeline.updateElements({ updates: subsToUpdate });
+					}
+					if (subsToDelete.length > 0) {
+						editor.timeline.deleteElements({
+							elements: subsToDelete,
+							ripple: false,
+						});
+					}
+				}
+
 				const existingMemeTrack = scene?.tracks?.overlay?.find(
 					(t) =>
 						t.type === "video" &&
@@ -700,7 +762,7 @@ export function Captions() {
 				}
 			}
 		},
-		[editor, overlayImageAnimation],
+		[editor, overlayImageAnimation, verticalAlign],
 	);
 
 	const applySinaiMemesToCues = useCallback(

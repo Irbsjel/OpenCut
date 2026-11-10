@@ -1537,10 +1537,23 @@ export class VideoCache {
 				: undefined);
 		if (sourceCanvas && !sinkData.thumbnailDataUrl) {
 			try {
-				sinkData.thumbnailDataUrl = sourceCanvas.toDataURL(
-					"image/jpeg",
-					0.82,
-				);
+				const maxThumbW = 320;
+				const scale = Math.min(1, maxThumbW / Math.max(1, sourceCanvas.width));
+				const thumbW = Math.max(16, Math.round(sourceCanvas.width * scale));
+				const thumbH = Math.max(16, Math.round(sourceCanvas.height * scale));
+				const thumbCanvas = document.createElement("canvas");
+				thumbCanvas.width = thumbW;
+				thumbCanvas.height = thumbH;
+				const thumbCtx = thumbCanvas.getContext("2d");
+				if (thumbCtx) {
+					thumbCtx.drawImage(sourceCanvas, 0, 0, thumbW, thumbH);
+					sinkData.thumbnailDataUrl = thumbCanvas.toDataURL("image/jpeg", 0.72);
+				} else {
+					sinkData.thumbnailDataUrl = sourceCanvas.toDataURL(
+						"image/jpeg",
+						0.72,
+					);
+				}
 			} catch {
 				// ignore
 			}

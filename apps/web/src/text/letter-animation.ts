@@ -678,10 +678,6 @@ function drawWordKaraokeLayout({
 					ctx.lineWidth = strokeW * 2.1;
 					ctx.lineJoin = "round";
 					ctx.lineCap = "round";
-					if ((animation.shadowBlur ?? 0) > 0) {
-						ctx.shadowColor = animation.shadowColor || "rgba(0,0,0,0.85)";
-						ctx.shadowBlur = animation.shadowBlur ?? 10;
-					}
 					ctx.strokeText(tok, 0, 0);
 					ctx.restore();
 				}

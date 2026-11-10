@@ -830,6 +830,7 @@ class StorageService {
 						await mediaAssetsAdapter
 							.set({ key: id, value: cloudFile })
 							.catch(() => {});
+						this.uploadedMediaKeys.add(id);
 						file = cloudFile;
 					}
 				}

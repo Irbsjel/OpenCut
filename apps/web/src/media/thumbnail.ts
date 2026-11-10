@@ -1,5 +1,5 @@
-const THUMBNAIL_MAX_WIDTH = 1280;
-const THUMBNAIL_MAX_HEIGHT = 720;
+const THUMBNAIL_MAX_WIDTH = 320;
+const THUMBNAIL_MAX_HEIGHT = 180;
 
 export function thumbnailSize({
 	width,
@@ -52,5 +52,5 @@ export function renderThumbnailDataUrl({
 	}
 
 	draw({ context, width: size.width, height: size.height });
-	return canvas.toDataURL("image/jpeg", 0.8);
+	return canvas.toDataURL("image/jpeg", 0.72);
 }

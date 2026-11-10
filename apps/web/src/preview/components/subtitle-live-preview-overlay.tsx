@@ -34,6 +34,19 @@ export function SubtitleLivePreviewOverlay() {
 		let anySub = false;
 		let atPlayhead = false;
 		for (const track of activeScene.tracks.overlay) {
+			if (track.type === "video") {
+				for (const el of track.elements) {
+					if (el.type !== "image") continue;
+					const startSec = mediaTimeToSeconds({ time: el.startTime });
+					const endSec = startSec + mediaTimeToSeconds({ time: el.duration });
+					if (
+						currentTimeSec >= startSec - 0.05 &&
+						currentTimeSec <= endSec + 0.05
+					) {
+						atPlayhead = true;
+					}
+				}
+			}
 			if (track.type !== "text") continue;
 			for (const el of track.elements) {
 				if (el.type !== "text") continue;

@@ -306,14 +306,10 @@ function collectTextNode({
 
 	const textureId = `${path}:text`;
 	const { width, height } = renderer;
-	// Text output is fully determined by node.params + node.resolved. Both are
-	// plain data we can stringify cheaply; the resolved measured layout is the
-	// expensive part of text setup, so stringifying it here is orders of
-	// magnitude cheaper than re-rasterizing when nothing changed.
-	const contentHash = `text:${width}x${height}:${JSON.stringify({
-		params: node.params,
-		resolved: node.resolved,
-	})}`;
+	const r = node.resolved;
+	const tf = r.transform;
+	const la = r.letterAnimation;
+	const contentHash = `text:${width}x${height}:${node.params.id}:${node.cachedMeasurementKey ?? node.params.params.content}:${tf.position.x.toFixed(1)},${tf.position.y.toFixed(1)},${tf.scaleX.toFixed(3)},${tf.scaleY.toFixed(3)},${tf.rotate.toFixed(1)}:${r.opacity.toFixed(2)}:${r.textColor}:${r.backgroundColor}:${la ? `${la.style}:${la.localTimeSec}:${la.accentColor}:${la.karaokeMode}` : "none"}`;
 	textures.set(textureId, {
 		kind: "rendered",
 		id: textureId,

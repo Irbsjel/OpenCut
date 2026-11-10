@@ -580,19 +580,29 @@ function resolveTextNode({
 				  }>
 				| undefined;
 			const rawWordTimings = node.params.params.wordTimings;
-			if (Array.isArray(rawWordTimings)) {
-				wordTimings = rawWordTimings as Array<{
-					word: string;
-					startOffset: number;
-					endOffset: number;
-				}>;
-			} else if (typeof rawWordTimings === "string" && rawWordTimings.startsWith("[")) {
-				try {
-					wordTimings = JSON.parse(rawWordTimings);
-				} catch {
-					wordTimings = undefined;
+			if (node.cachedWordTimingsRaw === rawWordTimings && rawWordTimings != null) {
+				wordTimings = node.cachedWordTimings;
+			} else {
+				if (Array.isArray(rawWordTimings)) {
+					wordTimings = rawWordTimings as Array<{
+						word: string;
+						startOffset: number;
+						endOffset: number;
+					}>;
+				} else if (
+					typeof rawWordTimings === "string" &&
+					rawWordTimings.startsWith("[")
+				) {
+					try {
+						wordTimings = JSON.parse(rawWordTimings);
+					} catch {
+						wordTimings = undefined;
+					}
 				}
+				node.cachedWordTimingsRaw = rawWordTimings;
+				node.cachedWordTimings = wordTimings;
 			}
+			const quantizeHz = activeStyle === "word-karaoke" ? 20 : 30;
 			return {
 				style: activeStyle,
 				speed: activeSpeed,
@@ -601,7 +611,7 @@ function resolveTextNode({
 				localTimeSec:
 					activeStyle === "none"
 						? 0
-						: Math.round(phaseTimeSec * 120) / 120,
+						: Math.round(phaseTimeSec * quantizeHz) / quantizeHz,
 				durationSec,
 				strokeWidth,
 				strokeColor,
