@@ -15,6 +15,12 @@ import { useKeyframeBoxSelect } from "@/timeline/hooks/element/use-keyframe-box-
 import { SelectionBox } from "@/selection/selection-box";
 import { getElementKeyframes } from "@/animation";
 import {
+	CLIP_ANIM_IN_OPTIONS,
+	CLIP_ANIM_LOOP_OPTIONS,
+	CLIP_ANIM_OUT_OPTIONS,
+	readClipAnimationParams,
+} from "@/animation/clip-animations";
+import {
 	canElementHaveAudio,
 	canElementBeHidden,
 	hasElementEffects,
@@ -23,7 +29,11 @@ import {
 	timelineTimeToSnappedPixels,
 } from "@/timeline";
 import { getTrackHeight } from "./track-layout";
-import { getTimelineElementClassName, TIMELINE_TRACK_THEME } from "./theme";
+import {
+	getTimelineElementClassName,
+	getTimelineElementClassNameForElement,
+	TIMELINE_TRACK_THEME,
+} from "./theme";
 import {
 	ContextMenu,
 	ContextMenuContent,
@@ -60,6 +70,7 @@ import {
 import { useElementSelection } from "@/timeline/hooks/element/use-element-selection";
 import { resolveStickerId } from "@/stickers";
 import { buildGraphicPreviewUrl } from "@/graphics";
+import { extractAndSaveClipLastFrame } from "@/media/extract-last-frame";
 import Image from "next/image";
 import {
 	ScissorIcon,
@@ -230,6 +241,7 @@ export function TimelineElement({
 	dragView,
 	isDropTarget = false,
 }: TimelineElementProps) {
+	const editor = useEditor();
 	const mediaAssets = useEditor((e) => e.media.getAssets());
 	const { selectedElements } = useElementSelection();
 	const requestRevealMedia = useAssetsPanelStore((s) => s.requestRevealMedia);
@@ -277,28 +289,28 @@ export function TimelineElement({
 		time: displayedStartTime,
 		zoomLevel,
 	});
-	const keyframeIndicators = isSelected
-		? getKeyframeIndicators({
-				keyframes: getElementKeyframes({ animations: element.animations }),
-				trackId: track.id,
-				elementId: element.id,
-				displayedStartTime,
-				zoomLevel,
-				elementLeft,
-				elementWidth,
-			})
-		: [];
+	const elementKeyframes = getElementKeyframes({
+		animations: renderElement.animations,
+	});
+	const keyframeIndicators =
+		elementKeyframes.length > 0
+			? getKeyframeIndicators({
+					keyframes: elementKeyframes,
+					trackId: track.id,
+					elementId: element.id,
+					displayedStartTime,
+					zoomLevel,
+					elementLeft,
+					elementWidth,
+				})
+			: [];
 
 	const {
 		keyframeDragState,
 		handleKeyframeMouseDown,
 		handleKeyframeClick,
 		getVisualOffsetPx,
-	} = useKeyframeDrag({ zoomLevel, element, displayedStartTime });
-
-	const elementKeyframes = getElementKeyframes({
-		animations: element.animations,
-	});
+	} = useKeyframeDrag({ zoomLevel, element: renderElement, displayedStartTime });
 
 	const isExpanded = useTimelineStore((s) =>
 		s.expandedElementIds.has(element.id),
@@ -308,8 +320,10 @@ export function TimelineElement({
 	);
 	const expandedRows = useMemo(
 		() =>
-			isExpanded ? getExpandedRows({ animations: element.animations }) : [],
-		[isExpanded, element.animations],
+			isExpanded
+				? getExpandedRows({ animations: renderElement.animations })
+				: [],
+		[isExpanded, renderElement.animations],
 	);
 
 	const {
@@ -332,6 +346,116 @@ export function TimelineElement({
 		event.stopPropagation();
 		if (hasMediaId(element)) {
 			requestRevealMedia(element.mediaId);
+		}
+	};
+
+	const handleClearEffectsAndTransitions = ({
+		event,
+		scope,
+	}: {
+		event: React.MouseEvent;
+		scope: "selected" | "all";
+	}) => {
+		event.stopPropagation();
+
+		const updates: Array<{
+			trackId: string;
+			elementId: string;
+			patch: Partial<TimelineElementType>;
+		}> = [];
+		const standaloneEffectsToDelete: Array<{
+			trackId: string;
+			elementId: string;
+		}> = [];
+
+		if (scope === "all") {
+			const sceneTracks = editor.scenes.getActiveScene().tracks;
+			const allTracks: TimelineTrack[] = [
+				...(sceneTracks.main ? [sceneTracks.main] : []),
+				...(sceneTracks.overlay ?? []),
+			];
+			for (const tr of allTracks) {
+				for (const el of tr.elements) {
+					if (el.type === "effect") {
+						standaloneEffectsToDelete.push({
+							trackId: tr.id,
+							elementId: el.id,
+						});
+						continue;
+					}
+					if (
+						el.type === "video" ||
+						el.type === "image" ||
+						el.type === "text" ||
+						el.type === "sticker" ||
+						el.type === "graphic"
+					) {
+						const rawParams = (el.params as Record<string, unknown>) ?? {};
+						updates.push({
+							trackId: tr.id,
+							elementId: el.id,
+							patch: {
+								params: {
+									...rawParams,
+									animIn: "none",
+									animLoop: "none",
+									animOut: "none",
+									...(el.type === "text" ? { letterAnimation: "none" } : {}),
+								},
+								effects: [],
+							} as Partial<TimelineElementType>,
+						});
+					}
+				}
+			}
+		} else {
+			const targetRefs =
+				isCurrentElementSelected && selectedElements.length > 0
+					? selectedElements
+					: [{ trackId: track.id, elementId: element.id }];
+			const elementsWithTracks = editor.timeline.getElementsWithTracks({
+				elements: targetRefs,
+			});
+
+			for (const { element: el, track: tr } of elementsWithTracks) {
+				if (el.type === "effect") {
+					standaloneEffectsToDelete.push({
+						trackId: tr.id,
+						elementId: el.id,
+					});
+					continue;
+				}
+				if (
+					el.type === "video" ||
+					el.type === "image" ||
+					el.type === "text" ||
+					el.type === "sticker" ||
+					el.type === "graphic"
+				) {
+					const rawParams = (el.params as Record<string, unknown>) ?? {};
+					updates.push({
+						trackId: tr.id,
+						elementId: el.id,
+						patch: {
+							params: {
+								...rawParams,
+								animIn: "none",
+								animLoop: "none",
+								animOut: "none",
+								...(el.type === "text" ? { letterAnimation: "none" } : {}),
+							},
+							effects: [],
+						} as Partial<TimelineElementType>,
+					});
+				}
+			}
+		}
+
+		if (updates.length > 0) {
+			editor.timeline.updateElements({ updates });
+		}
+		if (standaloneEffectsToDelete.length > 0) {
+			editor.timeline.deleteElements({ elements: standaloneEffectsToDelete });
 		}
 	};
 
@@ -404,9 +528,12 @@ export function TimelineElement({
 							onResizeStart={onResizeStart}
 							isDropTarget={isDropTarget}
 						/>
-						{isSelected && (
+						{keyframeIndicators.length > 0 && (
 							<div
-								className="pointer-events-none absolute inset-x-0 top-0 overflow-hidden"
+								className={cn(
+									"pointer-events-none absolute inset-x-0 top-0 overflow-hidden",
+									!isSelected && "opacity-85",
+								)}
 								style={{ height: `${baseTrackHeight}px` }}
 							>
 								<KeyframeIndicators
@@ -422,7 +549,7 @@ export function TimelineElement({
 						)}
 					</div>
 				</ContextMenuTrigger>
-				<ContextMenuContent className="w-64">
+				<ContextMenuContent className="w-72">
 					<ActionMenuItem
 						action="split"
 						icon={<HugeiconsIcon icon={ScissorIcon} />}
@@ -490,6 +617,21 @@ export function TimelineElement({
 							>
 								Reveal media
 							</ContextMenuItem>
+							{element.type === "video" && (
+								<ContextMenuItem
+									icon={<HugeiconsIcon icon={MagicWand05Icon} />}
+									onClick={(event: React.MouseEvent) => {
+										event.stopPropagation();
+										void extractAndSaveClipLastFrame({
+											editor,
+											element,
+											downloadFile: true,
+										});
+									}}
+								>
+									Extraer último frame (Continuidad IA)
+								</ContextMenuItem>
+							)}
 							<ContextMenuItem
 								icon={<HugeiconsIcon icon={Exchange01Icon} />}
 								disabled
@@ -498,6 +640,25 @@ export function TimelineElement({
 							</ContextMenuItem>
 						</>
 					)}
+					<ContextMenuSeparator />
+					<ContextMenuItem
+						icon={<HugeiconsIcon icon={MagicWand05Icon} />}
+						onClick={(event: React.MouseEvent) =>
+							handleClearEffectsAndTransitions({ event, scope: "selected" })
+						}
+					>
+						{selectedElements.length > 1 && isCurrentElementSelected
+							? `Eliminar efectos y transiciones (${selectedElements.length} clips)`
+							: "Eliminar efectos y transiciones"}
+					</ContextMenuItem>
+					<ContextMenuItem
+						icon={<HugeiconsIcon icon={MagicWand05Icon} />}
+						onClick={(event: React.MouseEvent) =>
+							handleClearEffectsAndTransitions({ event, scope: "all" })
+						}
+					>
+						Eliminar efectos y transiciones (todos los clips)
+					</ContextMenuItem>
 					<ContextMenuSeparator />
 					<DeleteMenuItem
 						isMultipleSelected={selectedElements.length > 1}
@@ -585,8 +746,9 @@ function ElementInner({
 						<div
 							className={cn(
 								"flex shrink-0 items-center overflow-hidden",
-								getTimelineElementClassName({
-									type: getTrackTypeForElementType({
+								getTimelineElementClassNameForElement({
+									elementType: element.type,
+									trackType: getTrackTypeForElementType({
 										elementType: element.type,
 									}),
 								}),
@@ -594,8 +756,9 @@ function ElementInner({
 							)}
 							style={{ height: `${baseTrackHeight}px` }}
 						>
-							<div className="flex flex-1 min-h-0 h-full items-center overflow-hidden">
+							<div className="relative flex flex-1 min-h-0 h-full items-center overflow-hidden">
 								<ElementContent element={visibleElement} track={track} />
+								<ClipAnimationPhaseOverlay element={visibleElement} />
 							</div>
 						</div>
 						{expandedContent}
@@ -618,6 +781,92 @@ function ElementInner({
 						onResizeStart={onResizeStart}
 					/>
 				</>
+			)}
+		</div>
+	);
+}
+
+function ClipAnimationPhaseOverlay({
+	element,
+}: {
+	element: TimelineElementType;
+}) {
+	if (element.type === "audio" || element.type === "effect") {
+		return null;
+	}
+	const rawParams =
+		"params" in element && element.params
+			? (element.params as Record<string, unknown>)
+			: undefined;
+	const cfg = readClipAnimationParams(rawParams);
+	const hasIn = cfg.animIn !== "none";
+	const hasLoop = cfg.animLoop !== "none";
+	const hasOut = cfg.animOut !== "none";
+
+	if (!hasIn && !hasLoop && !hasOut) {
+		return null;
+	}
+
+	const durationSec = Math.max(0.2, element.duration / TICKS_PER_SECOND);
+	const inDur = hasIn ? cfg.animInDuration : 0;
+	const outDur = hasOut ? cfg.animOutDuration : 0;
+
+	const inPct = Math.min(
+		96,
+		Math.max(4, (Math.min(inDur, durationSec) / durationSec) * 100),
+	);
+	const outPct = Math.min(
+		96,
+		Math.max(4, (Math.min(outDur, durationSec) / durationSec) * 100),
+	);
+
+	const inLabel =
+		CLIP_ANIM_IN_OPTIONS.find((o) => o.value === cfg.animIn)?.label ?? "In";
+	const loopLabel =
+		CLIP_ANIM_LOOP_OPTIONS.find((o) => o.value === cfg.animLoop)?.label ??
+		"Bucle";
+	const outLabel =
+		CLIP_ANIM_OUT_OPTIONS.find((o) => o.value === cfg.animOut)?.label ?? "Out";
+
+	return (
+		<div className="pointer-events-none absolute inset-0 z-10 overflow-hidden select-none">
+			{/* Phase 1: Entrada (Left Ramp) */}
+			{hasIn && (
+				<div
+					style={{ width: `${inPct}%` }}
+					className="absolute inset-y-0 left-0 border-r-2 border-dashed border-emerald-300/85 bg-gradient-to-r from-emerald-500/35 to-emerald-500/5"
+				>
+					<div className="absolute bottom-0.5 left-1 max-w-[94%] truncate rounded bg-emerald-950/90 px-1 py-[0.5px] text-[8px] font-bold leading-tight text-emerald-200 border border-emerald-400/50">
+						▶ {inLabel} · {inDur.toFixed(2)}s
+					</div>
+				</div>
+			)}
+
+			{/* Phase 2: Bucle / Enmedio (Center Indicator) */}
+			{hasLoop && (
+				<div
+					style={{
+						left: hasIn ? `${inPct}%` : "0%",
+						right: hasOut ? `${outPct}%` : "0%",
+					}}
+					className="absolute inset-y-0 border-b-2 border-indigo-400/80 bg-indigo-500/10"
+				>
+					<div className="absolute bottom-0.5 left-1/2 -translate-x-1/2 max-w-[90%] truncate whitespace-nowrap rounded bg-indigo-950/85 px-1 py-[0.5px] text-[8px] font-bold leading-tight text-indigo-200 border border-indigo-400/40">
+						↻ {loopLabel}
+					</div>
+				</div>
+			)}
+
+			{/* Phase 3: Salida (Right Ramp) */}
+			{hasOut && (
+				<div
+					style={{ width: `${outPct}%` }}
+					className="absolute inset-y-0 right-0 border-l-2 border-dashed border-rose-300/85 bg-gradient-to-l from-rose-500/35 to-rose-500/5"
+				>
+					<div className="absolute bottom-0.5 right-1 max-w-[94%] truncate rounded bg-rose-950/90 px-1 py-[0.5px] text-[8px] font-bold leading-tight text-rose-200 border border-rose-400/50">
+						{outLabel} · {outDur.toFixed(2)}s ◀
+					</div>
+				</div>
 			)}
 		</div>
 	);
@@ -991,6 +1240,7 @@ function AudioElementContent({
 			"AudioElementContent must be rendered inside PixelsPerSecondContext.Provider",
 		);
 	}
+	const editor = useEditor();
 	const mediaAssets = useEditor((e) => e.media.getAssets());
 	const mediaAsset =
 		element.sourceType === "upload"
@@ -1088,6 +1338,7 @@ function TiledMediaContent({
 	element: VideoElement | ImageElement;
 	track: TimelineTrack;
 }) {
+	const editor = useEditor();
 	const mediaAssets = useEditor((e) => e.media.getAssets());
 
 	const mediaAsset = mediaAssets.find((asset) => asset.id === element.mediaId);
@@ -1105,7 +1356,11 @@ function TiledMediaContent({
 	}
 
 	const trackHeight = getTrackHeight({ type: track.type });
-	const tileWidth = trackHeight * THUMBNAIL_ASPECT_RATIO;
+	const assetAspect =
+		mediaAsset?.width && mediaAsset?.height && mediaAsset.height > 0
+			? Math.max(0.45, Math.min(2.8, mediaAsset.width / mediaAsset.height))
+			: THUMBNAIL_ASPECT_RATIO;
+	const tileWidth = Math.max(24, Math.round(trackHeight * assetAspect));
 
 	return (
 		<>

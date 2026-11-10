@@ -22,6 +22,130 @@ export type VideoFileData = {
 	thumbnailUrl: string | null;
 };
 
+async function fallbackVideoMetadataFromElement(
+	file: File,
+	hints?: { width?: number; height?: number; duration?: number },
+): Promise<{
+	duration: number;
+	width: number;
+	height: number;
+	thumbnailUrl: string | null;
+}> {
+	const mimeType =
+		file.type && file.type.startsWith("video/") ? file.type : "video/mp4";
+	const blob =
+		file.type === mimeType ? file : file.slice(0, file.size, mimeType);
+	const objectUrl = URL.createObjectURL(blob);
+	const video = document.createElement("video");
+	video.muted = true;
+	video.playsInline = true;
+	video.preload = "auto";
+	video.src = objectUrl;
+
+	try {
+		await new Promise<void>((resolve, reject) => {
+			let settled = false;
+			const timer = setTimeout(() => {
+				if (!settled) {
+					settled = true;
+					resolve();
+				}
+			}, 7500);
+			const done = () => {
+				if (settled) return;
+				if (video.videoWidth > 0 && video.videoHeight > 0) {
+					settled = true;
+					clearTimeout(timer);
+					resolve();
+				}
+			};
+			video.addEventListener("loadedmetadata", done);
+			video.addEventListener("loadeddata", done);
+			video.addEventListener("canplay", done);
+			video.addEventListener(
+				"error",
+				() => {
+					if (settled) return;
+					settled = true;
+					clearTimeout(timer);
+					reject(new Error("Could not load video element"));
+				},
+				{ once: true },
+			);
+			video.load();
+		});
+
+		const rawDur =
+			Number.isFinite(video.duration) && video.duration > 0
+				? video.duration
+				: hints?.duration && hints.duration > 0
+					? hints.duration
+					: 8;
+
+		const seekTarget = Math.min(0.12, Math.max(0.02, rawDur * 0.05));
+		if (video.readyState < 2 || video.currentTime === 0) {
+			await new Promise<void>((resolve) => {
+				const t = setTimeout(resolve, 1200);
+				video.addEventListener(
+					"seeked",
+					() => {
+						clearTimeout(t);
+						resolve();
+					},
+					{ once: true },
+				);
+				try {
+					video.currentTime = seekTarget;
+				} catch {
+					clearTimeout(t);
+					resolve();
+				}
+			});
+		}
+
+		const width =
+			(video.videoWidth > 0 ? video.videoWidth : undefined) ||
+			(hints?.width && hints.width > 0 ? hints.width : undefined) ||
+			1280;
+		const height =
+			(video.videoHeight > 0 ? video.videoHeight : undefined) ||
+			(hints?.height && hints.height > 0 ? hints.height : undefined) ||
+			720;
+		const duration =
+			Number.isFinite(video.duration) && video.duration > 0
+				? video.duration
+				: hints?.duration && hints.duration > 0
+					? hints.duration
+					: 8;
+
+		let thumbnailUrl: string | null = null;
+		if (video.readyState >= 2 && video.videoWidth > 0 && video.videoHeight > 0) {
+			try {
+				thumbnailUrl = renderThumbnailDataUrl({
+					width: video.videoWidth,
+					height: video.videoHeight,
+					draw: ({ context, width: w, height: h }) => {
+						context.drawImage(video, 0, 0, w, h);
+					},
+				});
+			} catch {
+				thumbnailUrl = null;
+			}
+		}
+
+		return { duration, width, height, thumbnailUrl };
+	} finally {
+		try {
+			video.pause();
+			video.removeAttribute("src");
+			video.load();
+		} catch {
+			// ignore
+		}
+		URL.revokeObjectURL(objectUrl);
+	}
+}
+
 export async function readVideoFile({
 	file,
 }: {
@@ -32,54 +156,131 @@ export async function readVideoFile({
 		formats: ALL_FORMATS,
 	});
 
+	let knownDuration = 0;
+	let knownWidth = 0;
+	let knownHeight = 0;
+
 	try {
-		const duration = await input.computeDuration();
+		knownDuration = await input.computeDuration();
 		const videoTrack = await input.getPrimaryVideoTrack();
 
 		if (!videoTrack) {
 			throw new Error("No video track found in the file");
 		}
 
-		const canDecode = await videoTrack.canDecode();
-		const packetStats = await videoTrack.computePacketStats(100);
-		const audioTrack = await input.getPrimaryAudioTrack();
+		knownWidth = videoTrack.displayWidth || 0;
+		knownHeight = videoTrack.displayHeight || 0;
+
+		let fps = 24;
+		try {
+			const packetStats = await videoTrack.computePacketStats(100);
+			if (
+				packetStats?.averagePacketRate &&
+				Number.isFinite(packetStats.averagePacketRate)
+			) {
+				fps = packetStats.averagePacketRate;
+			}
+		} catch {
+			fps = 24;
+		}
+
+		let hasAudio = true;
+		try {
+			const audioTrack = await input.getPrimaryAudioTrack();
+			hasAudio = audioTrack !== null;
+		} catch {
+			hasAudio = true;
+		}
 
 		let thumbnailUrl: string | null = null;
-		if (canDecode) {
-			const sink = new VideoSampleSink(videoTrack);
-			const frame = await sink.getSample(1);
-			if (frame) {
-				try {
-					thumbnailUrl = renderThumbnailDataUrl({
-						width: videoTrack.displayWidth,
-						height: videoTrack.displayHeight,
-						draw: ({ context, width, height }) => {
-							frame.draw(context, 0, 0, width, height);
-						},
-					});
-				} finally {
-					frame.close();
+		try {
+			const canDecodeWebCodecs = await videoTrack.canDecode();
+			if (canDecodeWebCodecs && knownWidth > 0 && knownHeight > 0) {
+				const sink = new VideoSampleSink(videoTrack);
+				const frame = await sink.getSample(0.1);
+				if (frame) {
+					try {
+						thumbnailUrl = renderThumbnailDataUrl({
+							width: knownWidth,
+							height: knownHeight,
+							draw: ({ context, width, height }) => {
+								frame.draw(context, 0, 0, width, height);
+							},
+						});
+					} finally {
+						try {
+							frame.close();
+						} catch {
+							// ignore
+						}
+					}
 				}
+			}
+		} catch {
+			// WebCodecs VideoSampleSink failed on this platform; fall back to HTMLVideoElement for thumbnail
+		}
+
+		let finalDuration = knownDuration;
+		let finalWidth = knownWidth;
+		let finalHeight = knownHeight;
+
+		if (
+			!thumbnailUrl ||
+			!Number.isFinite(finalDuration) ||
+			finalDuration <= 0 ||
+			finalWidth <= 0 ||
+			finalHeight <= 0
+		) {
+			try {
+				const fb = await fallbackVideoMetadataFromElement(file, {
+					width: finalWidth,
+					height: finalHeight,
+					duration: finalDuration,
+				});
+				if (!thumbnailUrl) thumbnailUrl = fb.thumbnailUrl;
+				if (!Number.isFinite(finalDuration) || finalDuration <= 0) {
+					finalDuration = fb.duration;
+				}
+				if (!finalWidth || finalWidth <= 0) finalWidth = fb.width;
+				if (!finalHeight || finalHeight <= 0) finalHeight = fb.height;
+			} catch {
+				// ignore fallback error
 			}
 		}
 
 		return {
-			duration,
-			width: videoTrack.displayWidth,
-			height: videoTrack.displayHeight,
-			fps: packetStats.averagePacketRate,
-			hasAudio: audioTrack !== null,
+			duration: finalDuration,
+			width: finalWidth,
+			height: finalHeight,
+			fps,
+			hasAudio,
 			codec: videoTrack.codec,
-			canDecode,
+			canDecode: true,
 			thumbnailUrl,
+		};
+	} catch {
+		const fb = await fallbackVideoMetadataFromElement(file, {
+			width: knownWidth,
+			height: knownHeight,
+			duration: knownDuration,
+		});
+		return {
+			duration: fb.duration,
+			width: fb.width,
+			height: fb.height,
+			fps: 24,
+			hasAudio: true,
+			codec: "avc",
+			canDecode: true,
+			thumbnailUrl: fb.thumbnailUrl,
 		};
 	} finally {
 		input.dispose();
 	}
 }
 
-const SAMPLE_RATE = 44100;
-const NUM_CHANNELS = 2;
+const SAMPLE_RATE = 16000;
+const NUM_CHANNELS = 1;
 const EMPTY_TIMELINE_SILENT_DURATION_SECONDS = 0.1;
 const MIN_SILENT_DURATION_SECONDS = 0.001;
 
@@ -104,12 +305,26 @@ export const extractTimelineAudio = async ({
 
 	onProgress?.(10);
 
-	const audioBuffer = await createTimelineAudioBuffer({
+	let audioBuffer = await createTimelineAudioBuffer({
 		tracks,
 		mediaAssets,
 		duration: totalDuration,
 		sampleRate: SAMPLE_RATE,
 	});
+
+	if (!audioBuffer) {
+		const unmutedTracks: SceneTracks = {
+			main: { ...tracks.main, muted: false },
+			overlay: tracks.overlay.map((t) => ({ ...t, muted: false })),
+			audio: tracks.audio.map((t) => ({ ...t, muted: false })),
+		};
+		audioBuffer = await createTimelineAudioBuffer({
+			tracks: unmutedTracks,
+			mediaAssets,
+			duration: totalDuration,
+			sampleRate: SAMPLE_RATE,
+		});
+	}
 
 	if (!audioBuffer) {
 		const silentDurationSeconds = Math.max(
@@ -179,7 +394,7 @@ function createWavBlob({ samples }: { samples: Float32Array }): Blob {
 	writeString({ view, offset: 36, str: "data" });
 	view.setUint32(40, dataSize, true);
 
-	// convert float32 to int16 and write
+	// convert float32 [-1, 1] to int16 [-32768, 32767]
 	let offset = 44;
 	for (let i = 0; i < samples.length; i++) {
 		const sample = Math.max(-1, Math.min(1, samples[i]));

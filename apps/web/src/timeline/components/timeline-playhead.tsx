@@ -114,7 +114,9 @@ export function TimelinePlayhead({
 			tabIndex={0}
 			className="pointer-events-none absolute"
 			style={{
-				left: `${leftPosition}px`,
+				left: 0,
+				transform: `translate3d(${leftPosition}px, 0, 0)`,
+				willChange: "transform",
 				top: 0,
 				height: `${totalHeight}px`,
 				width: `${TIMELINE_INDICATOR_LINE_WIDTH_PX}px`,

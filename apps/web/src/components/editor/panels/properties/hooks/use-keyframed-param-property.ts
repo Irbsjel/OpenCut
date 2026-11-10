@@ -7,6 +7,13 @@ import {
 	hasKeyframesForPath,
 	upsertPathKeyframe,
 } from "@/animation";
+import {
+	findNearestTransformKeyframeTime,
+	hasAnyTransformKeyframes,
+	TRANSFORM_ANIMATION_PATHS,
+	type TransformAnimationPath,
+	useAutoKeyframeEnabled,
+} from "@/animation/transform-keyframes";
 import type {
 	AnimationPath,
 	ElementAnimations,
@@ -17,7 +24,7 @@ import {
 	type ParamDefinition,
 } from "@/params";
 import type { TimelineElement } from "@/timeline";
-import type { MediaTime } from "@/wasm";
+import { type MediaTime, ZERO_MEDIA_TIME } from "@/wasm";
 
 export interface KeyframedParamPropertyResult {
 	hasAnimatedKeyframes: boolean;
@@ -54,44 +61,81 @@ export function useKeyframedParamProperty({
 	}) => Partial<TimelineElement>;
 }): KeyframedParamPropertyResult {
 	const editor = useEditor();
+	const [autoKeyframe] = useAutoKeyframeEnabled();
 	const resolvedPropertyPath =
 		propertyPath ?? buildGraphicParamPath({ paramKey: param.key });
+	const isTransformPath = TRANSFORM_ANIMATION_PATHS.includes(
+		resolvedPropertyPath as TransformAnimationPath,
+	);
 	const hasAnimatedKeyframes = hasKeyframesForPath({
 		animations,
 		propertyPath: resolvedPropertyPath,
 	});
+	const snappedTime = isTransformPath
+		? (findNearestTransformKeyframeTime({
+				animations,
+				localTime,
+			}) ?? localTime)
+		: localTime;
 	const keyframeAtTime = isPlayheadWithinElementRange
-		? getKeyframeAtTime({
+		? (getKeyframeAtTime({
 				animations,
 				propertyPath: resolvedPropertyPath,
 				time: localTime,
-			})
+			}) ??
+			(snappedTime !== localTime
+				? getKeyframeAtTime({
+						animations,
+						propertyPath: resolvedPropertyPath,
+						time: snappedTime,
+					})
+				: null))
 		: null;
 	const keyframeIdAtTime = keyframeAtTime?.id ?? null;
 	const isKeyframedAtTime = keyframeAtTime !== null;
 	const shouldUseAnimatedChannel =
-		hasAnimatedKeyframes && isPlayheadWithinElementRange;
+		isPlayheadWithinElementRange &&
+		(hasAnimatedKeyframes ||
+			(isTransformPath &&
+				(hasAnyTransformKeyframes(animations) ||
+					(autoKeyframe && localTime > 0))));
 
 	const previewValue: KeyframedParamPropertyResult["onPreview"] = (value) => {
 		if (shouldUseAnimatedChannel) {
+			let nextAnimations = animations;
+			if (!hasAnimatedKeyframes && snappedTime > 0) {
+				nextAnimations = upsertPathKeyframe({
+					animations: nextAnimations,
+					propertyPath: resolvedPropertyPath,
+					time: ZERO_MEDIA_TIME,
+					value: resolvedValue,
+					channelLayout: getParamChannelLayout({ param }),
+					coerceValue: ({ value: nextValue }) =>
+						coerceParamValue({
+							param,
+							value: nextValue,
+						}),
+				});
+			}
+			nextAnimations = upsertPathKeyframe({
+				animations: nextAnimations,
+				propertyPath: resolvedPropertyPath,
+				time: snappedTime,
+				value,
+				channelLayout: getParamChannelLayout({ param }),
+				coerceValue: ({ value: nextValue }) =>
+					coerceParamValue({
+						param,
+						value: nextValue,
+					}),
+			});
 			editor.timeline.previewElements({
 				updates: [
 					{
 						trackId,
 						elementId,
 						updates: {
-							animations: upsertPathKeyframe({
-								animations,
-								propertyPath: resolvedPropertyPath,
-								time: localTime,
-								value,
-								channelLayout: getParamChannelLayout({ param }),
-								coerceValue: ({ value: nextValue }) =>
-									coerceParamValue({
-										param,
-										value: nextValue,
-									}),
-							}),
+							animations: nextAnimations,
 						},
 					},
 				],

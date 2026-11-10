@@ -84,7 +84,6 @@ function EditorLayout() {
 	const activeScene = useEditor((editor) =>
 		editor.scenes.getActiveSceneOrNull(),
 	);
-	const currentTime = useEditor((editor) => editor.playback.getCurrentTime());
 	const activeGuide = usePreviewStore((state) => state.activeGuide);
 	const overlays = usePreviewStore((state) => state.overlays);
 	const setOverlayVisibility = usePreviewStore(
@@ -94,6 +93,11 @@ function EditorLayout() {
 		overlay: bookmarkNotesPreviewOverlay,
 		overlays,
 	});
+	const hasBookmarkNotes =
+		showBookmarkNotes && (activeScene?.bookmarks?.length ?? 0) > 0;
+	const currentTime = useEditor((editor) =>
+		hasBookmarkNotes ? editor.playback.getCurrentTime() : 0,
+	);
 
 	const overlaySource = useMemo(
 		() =>

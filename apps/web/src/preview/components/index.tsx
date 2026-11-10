@@ -1,7 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import useDeepCompareEffect from "use-deep-compare-effect";
+import {
+	ensureModernFontsStylesheet,
+	subscribeFontLoad,
+} from "@/fonts/modern-fonts-2026";
+import { videoCache } from "@/services/video-cache/service";
 import { useEditor } from "@/editor/use-editor";
 import { useRafLoop } from "@/hooks/use-raf-loop";
 import { useContainerSize } from "@/hooks/use-container-size";
@@ -12,6 +16,7 @@ import type { RootNode } from "@/services/renderer/nodes/root-node";
 import { buildScene } from "@/services/renderer/scene-builder";
 import { PreviewOverlayLayer } from "./overlay-layer";
 import { PreviewInteractionOverlay } from "./preview-interaction-overlay";
+import { SubtitleLivePreviewOverlay } from "./subtitle-live-preview-overlay";
 import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu";
 import type {
 	PreviewOverlayControl,
@@ -102,7 +107,7 @@ function RenderTreeController() {
 
 	const { width, height } = usePreviewSize();
 
-	useDeepCompareEffect(() => {
+	useEffect(() => {
 		if (!activeProject) return;
 
 		const duration = editor.timeline.getTotalDuration();
@@ -112,11 +117,21 @@ function RenderTreeController() {
 			duration,
 			canvasSize: { width, height },
 			background: activeProject.settings.background,
+			canvasFitMode: activeProject.settings.canvasFitMode ?? "contain",
 			isPreview: true,
 		});
 
 		editor.renderer.setRenderTree({ renderTree });
-	}, [tracks, mediaAssets, activeProject?.settings.background, width, height]);
+	}, [
+		editor,
+		tracks,
+		mediaAssets,
+		activeProject,
+		activeProject?.settings.background,
+		activeProject?.settings.canvasFitMode,
+		width,
+		height,
+	]);
 
 	return null;
 }
@@ -168,6 +183,29 @@ function PreviewCanvas({
 	// renders straight into this element, so there is no intermediate copy —
 	// the container div owns positioning/styling, the canvas itself fills it.
 	useEffect(() => {
+		ensureModernFontsStylesheet();
+		const unsubFonts = subscribeFontLoad(() => {
+			lastFrameRef.current = -1;
+		});
+		const invalidatePreview = () => {
+			lastFrameRef.current = -1;
+		};
+		window.addEventListener("opencut-video-frame-ready", invalidatePreview);
+		window.addEventListener("opencut-video-metadata-ready", invalidatePreview);
+		return () => {
+			unsubFonts();
+			window.removeEventListener(
+				"opencut-video-frame-ready",
+				invalidatePreview,
+			);
+			window.removeEventListener(
+				"opencut-video-metadata-ready",
+				invalidatePreview,
+			);
+		};
+	}, []);
+
+	useEffect(() => {
 		const mount = canvasMountRef.current;
 		if (!mount) return;
 		const outputCanvas = renderer.getOutputCanvas();
@@ -175,6 +213,7 @@ function PreviewCanvas({
 		outputCanvas.style.width = "100%";
 		outputCanvas.style.height = "100%";
 		mount.appendChild(outputCanvas);
+		lastFrameRef.current = -1;
 		return () => {
 			if (outputCanvas.parentElement === mount) {
 				mount.removeChild(outputCanvas);
@@ -184,6 +223,16 @@ function PreviewCanvas({
 
 	const render = useCallback(() => {
 		if (!renderTree || renderingRef.current) return;
+		if (
+			videoCache.isExporting() ||
+			editor.project.getExportState().isExporting
+		) {
+			lastFrameRef.current = -1;
+			return;
+		}
+
+		const isPlayingNow = editor.playback.getIsPlaying();
+		videoCache.setPlaybackActive(isPlayingNow);
 
 		const renderTime = Math.min(
 			editor.playback.getCurrentTime(),
@@ -196,7 +245,8 @@ function PreviewCanvas({
 
 		if (
 			frame === lastFrameRef.current &&
-			renderTree === lastSceneRef.current
+			renderTree === lastSceneRef.current &&
+			!videoCache.consumeDirtyFlag()
 		) {
 			return;
 		}
@@ -206,10 +256,11 @@ function PreviewCanvas({
 		lastFrameRef.current = frame;
 		renderer
 			.render({ node: renderTree, time: renderTime })
-			.then(() => {
+			.catch(() => {})
+			.finally(() => {
 				renderingRef.current = false;
 			});
-	}, [renderer, renderTree, editor.playback, editor.timeline]);
+	}, [renderer, renderTree, editor.playback, editor.timeline, editor.project]);
 
 	useRafLoop(render);
 
@@ -326,6 +377,7 @@ function PreviewCanvas({
 									instances={overlayInstances}
 									plane="under-interaction"
 								/>
+								<SubtitleLivePreviewOverlay />
 								<PreviewInteractionOverlay />
 								<PreviewOverlayLayer
 									instances={overlayInstances}

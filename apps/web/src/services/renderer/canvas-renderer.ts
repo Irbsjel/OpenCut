@@ -50,7 +50,15 @@ export class CanvasRenderer {
 		this.context = surface.context;
 	}
 
-	async render({ node, time }: { node: AnyBaseNode; time: number }) {
+	async render({
+		node,
+		time,
+		targetCtx,
+	}: {
+		node: AnyBaseNode;
+		time: number;
+		targetCtx?: CanvasRenderingContext2D | null;
+	}) {
 		await measureSpanAsync({
 			name: "resolve",
 			fn: () => resolveRenderTree({ node, renderer: this, time }),
@@ -59,17 +67,19 @@ export class CanvasRenderer {
 			name: "buildFrame",
 			fn: () => buildFrameDescriptor({ node, renderer: this }),
 		});
-		wasmCompositor.ensureInitialized({
-			width: this.width,
-			height: this.height,
-		});
+		if (!targetCtx) {
+			wasmCompositor.ensureInitialized({
+				width: this.width,
+				height: this.height,
+			});
+		}
 		measureSpanSync({
 			name: "syncTextures",
 			fn: () => wasmCompositor.syncTextures(textures),
 		});
 		measureSpanSync({
 			name: "renderFrame",
-			fn: () => wasmCompositor.render(frame),
+			fn: () => wasmCompositor.render(frame, targetCtx),
 		});
 	}
 
@@ -82,24 +92,12 @@ export class CanvasRenderer {
 		time: number;
 		targetCanvas: HTMLCanvasElement;
 	}) {
-		await this.render({ node, time });
-
-		const ctx = targetCanvas.getContext("2d");
+		const ctx = targetCanvas.getContext("2d", { alpha: false });
 		if (!ctx) {
 			throw new Error("Failed to get target canvas context");
 		}
 
-		measureSpanSync({
-			name: "drawImage",
-			fn: () =>
-				ctx.drawImage(
-					wasmCompositor.getCanvas(),
-					0,
-					0,
-					targetCanvas.width,
-					targetCanvas.height,
-				),
-		});
+		await this.render({ node, time, targetCtx: ctx });
 		onRenderPerfFrameComplete();
 	}
 }

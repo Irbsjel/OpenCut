@@ -60,16 +60,18 @@ export function useTimelinePlayhead({
 
 	// Scroll → keep playhead position in sync with scroll offset.
 	useEffect(() => {
+		if (!playheadRef) return;
 		const scrollEl = rulerScrollRef.current;
 		if (!scrollEl) return;
 		const handler = () =>
 			ctrl.updatePlayheadLeft(editor.playback.getCurrentTime());
 		scrollEl.addEventListener("scroll", handler, { passive: true });
 		return () => scrollEl.removeEventListener("scroll", handler);
-	}, [ctrl, editor.playback, rulerScrollRef]);
+	}, [ctrl, editor.playback, rulerScrollRef, playheadRef]);
 
 	// Playback events → update playhead position and auto-scroll during playback.
 	useEffect(() => {
+		if (!playheadRef) return;
 		const handler = (time: MediaTime) => ctrl.handlePlaybackUpdate(time);
 		ctrl.updatePlayheadLeft(editor.playback.getCurrentTime());
 		const unsubscribeUpdate = editor.playback.onUpdate(handler);
@@ -78,7 +80,7 @@ export function useTimelinePlayhead({
 			unsubscribeUpdate();
 			unsubscribeSeek();
 		};
-	}, [ctrl, editor.playback]);
+	}, [ctrl, editor.playback, playheadRef]);
 
 	useEdgeAutoScroll({
 		isActive: isScrubbing,

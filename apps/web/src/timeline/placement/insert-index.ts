@@ -29,6 +29,13 @@ export function getHighestInsertIndexForTrack({
 		return tracks.overlay.length + 1;
 	}
 
+	if (trackType === "video") {
+		const firstVideoIndex = tracks.overlay.findIndex(
+			(track) => track.type === "video",
+		);
+		return firstVideoIndex !== -1 ? firstVideoIndex : tracks.overlay.length;
+	}
+
 	return 0;
 }
 

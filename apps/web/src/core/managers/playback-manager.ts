@@ -1,4 +1,5 @@
 import type { EditorCore } from "@/core";
+import { videoCache } from "@/services/video-cache/service";
 import {
 	addMediaTime,
 	clampMediaTime,
@@ -50,12 +51,14 @@ export class PlaybackManager {
 		}
 
 		this.isPlaying = true;
+		videoCache.setPlaybackActive(true);
 		this.startTimer();
 		this.notify();
 	}
 
 	pause(): void {
 		this.isPlaying = false;
+		videoCache.setPlaybackActive(false);
 		this.stopTimer();
 		this.notify();
 	}
@@ -74,7 +77,9 @@ export class PlaybackManager {
 			this.playbackStartWallTime = performance.now();
 			this.playbackStartTime = this.currentTime;
 		}
-		this.notify();
+		if (!this.isScrubbing) {
+			this.notify();
+		}
 		this.notifySeek(this.currentTime);
 	}
 
@@ -163,6 +168,7 @@ export class PlaybackManager {
 
 		if (shouldPause) {
 			this.isPlaying = false;
+			videoCache.setPlaybackActive(false);
 			this.stopTimer();
 		}
 
@@ -224,17 +230,33 @@ export class PlaybackManager {
 		const maxTime = this.editor.timeline.getTotalDuration();
 
 		if (newTime >= maxTime) {
+			const shouldLoop =
+				this.editor.project.getActive()?.settings.loop === true &&
+				maxTime > ZERO_MEDIA_TIME;
+
+			if (shouldLoop) {
+				this.playbackStartWallTime = performance.now();
+				this.playbackStartTime = ZERO_MEDIA_TIME;
+				this.currentTime = ZERO_MEDIA_TIME;
+				this.notifySeek(ZERO_MEDIA_TIME);
+				this.dispatchSeekEvent(ZERO_MEDIA_TIME);
+				this.playbackTimer = requestAnimationFrame(this.updateTime);
+				return;
+			}
+
 			this.pause();
 			this.currentTime = maxTime;
 			this.notify();
-		this.notifySeek(maxTime);
-		this.dispatchSeekEvent(maxTime);
-		return;
+			this.notifySeek(maxTime);
+			this.dispatchSeekEvent(maxTime);
+			return;
 		}
 
-		this.currentTime = newTime;
-		this.notifyUpdate(newTime);
-		this.dispatchUpdateEvent(newTime);
+		if (newTime !== this.currentTime) {
+			this.currentTime = newTime;
+			this.notifyUpdate(newTime);
+			this.dispatchUpdateEvent(newTime);
+		}
 		this.playbackTimer = requestAnimationFrame(this.updateTime);
 	};
 

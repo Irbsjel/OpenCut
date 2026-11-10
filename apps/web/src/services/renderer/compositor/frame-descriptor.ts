@@ -137,26 +137,35 @@ async function collectNode({
 		}
 		const textureId = `${path}:blur-background`;
 		const { width, height } = renderer;
-		const { backdropSource, passes } = node.resolved;
-		// Backdrop pixels come from a decoded video/image frame whose identity
-		// already changes when it changes. Hashing the source reference is
-		// enough to let us skip redraws on frozen frames.
-		const contentHash = `blur:${identityKey(backdropSource.source)}:${backdropSource.width}x${backdropSource.height}:${width}x${height}`;
+		const { backdropSource } = node.resolved;
+		const downscale = 6;
+		const blurW = Math.max(64, Math.round(width / downscale));
+		const blurH = Math.max(64, Math.round(height / downscale));
+		const blurRadiusPx = Math.max(
+			2,
+			Math.round((node.params.blurIntensity / 20) * 8),
+		);
+		const contentHash = `blur:${identityKey(backdropSource.source)}:${backdropSource.width}x${backdropSource.height}:${blurW}x${blurH}:${blurRadiusPx}`;
 		textures.set(textureId, {
 			kind: "rendered",
 			id: textureId,
 			contentHash,
-			width,
-			height,
+			width: blurW,
+			height: blurH,
 			draw: (ctx) => {
+				const bleed = blurRadiusPx * 2;
+				const targetW = blurW + bleed * 2;
+				const targetH = blurH + bleed * 2;
 				const coverScale = Math.max(
-					width / backdropSource.width,
-					height / backdropSource.height,
+					targetW / Math.max(1, backdropSource.width),
+					targetH / Math.max(1, backdropSource.height),
 				);
 				const scaledWidth = backdropSource.width * coverScale;
 				const scaledHeight = backdropSource.height * coverScale;
-				const offsetX = (width - scaledWidth) / 2;
-				const offsetY = (height - scaledHeight) / 2;
+				const offsetX = (blurW - scaledWidth) / 2;
+				const offsetY = (blurH - scaledHeight) / 2;
+				ctx.save();
+				ctx.filter = `blur(${blurRadiusPx}px)`;
 				ctx.drawImage(
 					backdropSource.source,
 					offsetX,
@@ -164,6 +173,7 @@ async function collectNode({
 					scaledWidth,
 					scaledHeight,
 				);
+				ctx.restore();
 			},
 		});
 		items.push({
@@ -172,7 +182,7 @@ async function collectNode({
 			transform: fullCanvasTransform(renderer),
 			opacity: 1,
 			blendMode: "normal",
-			effectPassGroups: [passes],
+			effectPassGroups: [],
 			mask: null,
 		});
 		return;
@@ -270,6 +280,7 @@ async function collectVisualSourceNode({
 		blendMode: node.params.blendMode ?? "normal",
 		effectPassGroups: node.resolved.effectPasses,
 		mask,
+		transitionFx: node.resolved.transitionFx ?? null,
 	});
 	if (strokeLayer) {
 		items.push(strokeLayer);
@@ -321,6 +332,7 @@ function collectTextNode({
 		blendMode: node.params.blendMode ?? "normal",
 		effectPassGroups: node.resolved.effectPasses,
 		mask: null,
+		transitionFx: node.resolved.transitionFx ?? null,
 	});
 }
 
@@ -335,12 +347,22 @@ function computeVisualTransform({
 	sourceWidth: number;
 	sourceHeight: number;
 }): QuadTransformDescriptor {
-	const containScale = Math.min(
-		renderer.width / sourceWidth,
-		renderer.height / sourceHeight,
-	);
-	const scaledWidth = sourceWidth * containScale * resolved.transform.scaleX;
-	const scaledHeight = sourceHeight * containScale * resolved.transform.scaleY;
+	const fitMode =
+		"fitMode" in resolved && resolved.fitMode === "cover"
+			? "cover"
+			: "contain";
+	const baseScale =
+		fitMode === "cover"
+			? Math.max(
+					renderer.width / Math.max(1, sourceWidth),
+					renderer.height / Math.max(1, sourceHeight),
+				)
+			: Math.min(
+					renderer.width / Math.max(1, sourceWidth),
+					renderer.height / Math.max(1, sourceHeight),
+				);
+	const scaledWidth = sourceWidth * baseScale * resolved.transform.scaleX;
+	const scaledHeight = sourceHeight * baseScale * resolved.transform.scaleY;
 	const absWidth = Math.abs(scaledWidth);
 	const absHeight = Math.abs(scaledHeight);
 
@@ -575,7 +597,9 @@ function identityKey(source: CanvasImageSource): string {
 			key = nextIdentity++;
 			identityKeys.set(source, key);
 		}
-		return `@${key}`;
+		const rev =
+			(source as unknown as { __frameRevision?: number }).__frameRevision ?? 0;
+		return `@${key}:${rev}`;
 	}
 	return "@?";
 }

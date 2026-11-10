@@ -1,4 +1,4 @@
-import { mediaTimeToSeconds, roundMediaTime } from "@/wasm";
+import { mediaTimeToSeconds, roundMediaTime, TICKS_PER_SECOND } from "@/wasm";
 import { getElementLocalTime } from "@/animation";
 import { resolveEffectParamsAtTime } from "@/animation/effect-param-channel";
 import {
@@ -38,6 +38,11 @@ import {
 import { ImageNode, loadImageSource } from "./nodes/image-node";
 import { StickerNode, loadStickerSource } from "./nodes/sticker-node";
 import { TextNode, type ResolvedTextNodeState } from "./nodes/text-node";
+import type { LetterAnimationStyle } from "@/text/letter-animation";
+import {
+	applyClipPhaseAnimations,
+	readClipAnimationParams,
+} from "@/animation/clip-animations";
 import { VideoNode } from "./nodes/video-node";
 import type {
 	ResolvedVisualNodeState,
@@ -91,9 +96,9 @@ async function resolveNode({
 		node.resolved = resolveEffectLayerNode({ node, context });
 	}
 
-	await Promise.all(
-		node.children.map((child) => resolveNode({ node: child, context })),
-	);
+	for (const child of node.children) {
+		await resolveNode({ node: child, context });
+	}
 }
 
 function resolveEffectPassGroups({
@@ -149,31 +154,51 @@ function resolveVisualState({
 		elementStartTime: params.timeOffset,
 		elementDuration: params.duration,
 	});
-	const transform = resolveTransformAtTime({
+	const baseTransform = resolveTransformAtTime({
 		baseTransform: params.transform,
 		animations: params.animations,
 		localTime,
 	});
-	const opacity = resolveOpacityAtTime({
+	const baseOpacity = resolveOpacityAtTime({
 		baseOpacity: params.opacity,
 		animations: params.animations,
 		localTime,
 	});
-	const containScale = Math.min(
-		context.renderer.width / sourceWidth,
-		context.renderer.height / sourceHeight,
-	);
+	const { transform, opacity, transitionFx } = applyClipPhaseAnimations({
+		baseTransform,
+		baseOpacity,
+		clipParams: params.clipParams,
+		localTimeSec: localTime / 120_000,
+		timelineTimeSec: context.time / 120_000,
+		durationSec: params.duration / 120_000,
+		canvasWidth: context.renderer.width,
+		canvasHeight: context.renderer.height,
+		isText: false,
+	});
+	const fitMode = params.fitMode ?? "contain";
+	const baseScale =
+		fitMode === "cover"
+			? Math.max(
+					context.renderer.width / Math.max(1, sourceWidth),
+					context.renderer.height / Math.max(1, sourceHeight),
+				)
+			: Math.min(
+					context.renderer.width / Math.max(1, sourceWidth),
+					context.renderer.height / Math.max(1, sourceHeight),
+				);
 	const effectWidth = Math.round(
-		Math.abs(sourceWidth * containScale * transform.scaleX),
+		Math.abs(sourceWidth * baseScale * transform.scaleX),
 	);
 	const effectHeight = Math.round(
-		Math.abs(sourceHeight * containScale * transform.scaleY),
+		Math.abs(sourceHeight * baseScale * transform.scaleY),
 	);
 
 	return {
 		localTime,
 		transform,
 		opacity,
+		transitionFx,
+		fitMode,
 		effectPasses: resolveEffectPassGroups({
 			effects: params.effects,
 			animations: params.animations,
@@ -193,6 +218,28 @@ async function resolveVideoNode({
 }): Promise<ResolvedVisualSourceNodeState | null> {
 	const clipTime = context.time - node.params.timeOffset;
 	if (clipTime < 0 || clipTime >= node.params.duration) {
+		if (
+			videoCache.isPlaybackActive() &&
+			clipTime < 0 &&
+			clipTime >= -TICKS_PER_SECOND * 2.2
+		) {
+			const startSourceTicks =
+				node.params.trimStart +
+				getSourceTimeAtClipTime({
+					clipTime: 0,
+					retime: node.params.retime,
+				});
+			videoCache.prerollAt({
+				mediaId: node.params.mediaId,
+				file: node.params.file,
+				time: mediaTimeToSeconds({
+					time: roundMediaTime({ time: startSourceTicks }),
+				}),
+				leadTimeSec: mediaTimeToSeconds({
+					time: roundMediaTime({ time: -clipTime }),
+				}),
+			});
+		}
 		return null;
 	}
 
@@ -331,19 +378,37 @@ function resolveTextNode({
 		elementStartTime: node.params.startTime,
 		elementDuration: node.params.duration,
 	});
+	const localTimeSec = mediaTimeToSeconds({
+		time: roundMediaTime({ time: localTime }),
+	});
+	const durationSec = mediaTimeToSeconds({ time: node.params.duration });
 	const background = buildTextBackgroundFromElement({ element: node.params });
 
+	const baseTransform = resolveTransformAtTime({
+		baseTransform: node.params.transform,
+		animations: node.params.animations,
+		localTime,
+	});
+	const baseOpacity = resolveOpacityAtTime({
+		baseOpacity: node.params.opacity,
+		animations: node.params.animations,
+		localTime,
+	});
+	const { transform, opacity, transitionFx } = applyClipPhaseAnimations({
+		baseTransform,
+		baseOpacity,
+		clipParams: node.params.params,
+		localTimeSec,
+		durationSec,
+		canvasWidth: context.renderer.width,
+		canvasHeight: context.renderer.height,
+		isText: true,
+	});
+
 	return {
-		transform: resolveTransformAtTime({
-			baseTransform: node.params.transform,
-			animations: node.params.animations,
-			localTime,
-		}),
-		opacity: resolveOpacityAtTime({
-			baseOpacity: node.params.opacity,
-			animations: node.params.animations,
-			localTime,
-		}),
+		transform,
+		opacity,
+		transitionFx,
 		textColor: resolveColorAtTime({
 			baseColor:
 				typeof node.params.params.color === "string"
@@ -366,12 +431,171 @@ function resolveTextNode({
 			width: context.renderer.width,
 			height: context.renderer.height,
 		}),
-		measuredText: measureTextElement({
-			element: node.params,
-			canvasHeight: node.params.canvasHeight,
-			localTime,
-			ctx: getTextMeasurementContext(),
-		}),
+		measuredText: (() => {
+			const hasAnims =
+				node.params.animations &&
+				Object.keys(node.params.animations).length > 0;
+			const loadedFontCount =
+				typeof document !== "undefined" && document.fonts
+					? document.fonts.size
+					: 0;
+			const measurementKey = `${node.params.canvasHeight}|${loadedFontCount}|${node.params.params.content}|${node.params.params.fontFamily}|${node.params.params.fontSize}|${node.params.params.fontWeight}|${node.params.params.fontStyle}|${node.params.params.letterSpacing}|${node.params.params.lineHeight}|${node.params.params["background.enabled"]}|${node.params.params["background.paddingX"]}|${node.params.params["background.paddingY"]}|${node.params.params["background.cornerRadius"]}`;
+			if (!hasAnims) {
+				if (
+					!node.cachedStaticMeasurement ||
+					node.cachedMeasurementKey !== measurementKey
+				) {
+					node.cachedStaticMeasurement = measureTextElement({
+						element: node.params,
+						canvasHeight: node.params.canvasHeight,
+						localTime: 0,
+						ctx: getTextMeasurementContext(),
+					});
+					node.cachedMeasurementKey = measurementKey;
+				}
+				return node.cachedStaticMeasurement;
+			}
+			return measureTextElement({
+				element: node.params,
+				canvasHeight: node.params.canvasHeight,
+				localTime,
+				ctx: getTextMeasurementContext(),
+			});
+		})(),
+		letterAnimation: (() => {
+			const clipAnim = readClipAnimationParams(node.params.params);
+			const rawLegacy = node.params.params.letterAnimation;
+			const legacyStyle: LetterAnimationStyle =
+				typeof rawLegacy === "string" && rawLegacy.length > 0
+					? (rawLegacy as LetterAnimationStyle)
+					: "none";
+
+			const inDur =
+				clipAnim.animIn !== "none"
+					? Math.min(clipAnim.animInDuration, durationSec * 0.85)
+					: 0;
+			const outDur =
+				clipAnim.animOut !== "none"
+					? Math.min(
+							clipAnim.animOutDuration,
+							Math.max(0.08, durationSec - inDur * 0.5),
+						)
+					: 0;
+
+			let activeStyle: LetterAnimationStyle = "none";
+			let phaseTimeSec = localTimeSec;
+			let activeSpeed = clipAnim.animLoopSpeed;
+			const activeIntensity = clipAnim.animLoopIntensity;
+
+			if (
+				clipAnim.animIn.startsWith("letter-") &&
+				localTimeSec < inDur
+			) {
+				const mapIn: Record<string, LetterAnimationStyle> = {
+					"letter-pop-cascade": "pop-cascade",
+					"letter-typewriter": "typewriter-pro",
+					"letter-slide-up": "slide-up-reveal",
+					"letter-bounce": "bounce-elastic",
+					"letter-flip-3d": "flip-3d",
+					"letter-scatter": "scatter-converge",
+				};
+				activeStyle = mapIn[clipAnim.animIn] ?? "none";
+				phaseTimeSec = localTimeSec;
+				activeSpeed = Math.max(0.3, 0.65 / Math.max(0.15, inDur));
+			} else if (
+				clipAnim.animOut.startsWith("letter-") &&
+				localTimeSec > durationSec - outDur
+			) {
+				const mapOut: Record<string, LetterAnimationStyle> = {
+					"letter-pop-out": "pop-out-cascade",
+					"letter-scatter-out": "scatter-out",
+					"letter-drop-out": "drop-out",
+				};
+				activeStyle = mapOut[clipAnim.animOut] ?? "none";
+				phaseTimeSec = Math.max(0, localTimeSec - (durationSec - outDur));
+				activeSpeed = Math.max(0.3, 0.55 / Math.max(0.15, outDur));
+			} else if (clipAnim.animLoop.startsWith("letter-")) {
+				const mapLoop: Record<string, LetterAnimationStyle> = {
+					"letter-wave": "wave-kinetic",
+					"letter-karaoke": "word-karaoke",
+					"letter-neon-pulse": "neon-pulse",
+					"letter-heartbeat": "heartbeat-sync",
+					"letter-glitch-rgb": "glitch-cyber",
+				};
+				activeStyle = mapLoop[clipAnim.animLoop] ?? "none";
+				phaseTimeSec = Math.max(0, localTimeSec - inDur * 0.5);
+				activeSpeed = clipAnim.animLoopSpeed;
+			} else if (
+				clipAnim.animIn === "none" &&
+				clipAnim.animLoop === "none" &&
+				clipAnim.animOut === "none" &&
+				legacyStyle !== "none"
+			) {
+				activeStyle = legacyStyle;
+				phaseTimeSec = localTimeSec;
+			}
+
+			const accentColor =
+				typeof node.params.params.letterAnimationColor === "string"
+					? node.params.params.letterAnimationColor
+					: "#38bdf8";
+			const strokeWidth =
+				typeof node.params.params.strokeWidth === "number"
+					? node.params.params.strokeWidth
+					: 0;
+			const strokeColor =
+				typeof node.params.params.strokeColor === "string"
+					? node.params.params.strokeColor
+					: "#000000";
+			const shadowBlur =
+				typeof node.params.params.shadowBlur === "number"
+					? node.params.params.shadowBlur
+					: 0;
+			const shadowColor =
+				typeof node.params.params.shadowColor === "string"
+					? node.params.params.shadowColor
+					: "rgba(0,0,0,0.85)";
+			const karaokeMode =
+				node.params.params.karaokeMode === "highlight" ? "highlight" : "pill";
+			let wordTimings:
+				| Array<{
+						word: string;
+						startOffset: number;
+						endOffset: number;
+				  }>
+				| undefined;
+			const rawWordTimings = node.params.params.wordTimings;
+			if (Array.isArray(rawWordTimings)) {
+				wordTimings = rawWordTimings as Array<{
+					word: string;
+					startOffset: number;
+					endOffset: number;
+				}>;
+			} else if (typeof rawWordTimings === "string" && rawWordTimings.startsWith("[")) {
+				try {
+					wordTimings = JSON.parse(rawWordTimings);
+				} catch {
+					wordTimings = undefined;
+				}
+			}
+			return {
+				style: activeStyle,
+				speed: activeSpeed,
+				intensity: activeIntensity,
+				accentColor,
+				localTimeSec:
+					activeStyle === "none"
+						? 0
+						: Math.round(phaseTimeSec * 120) / 120,
+				durationSec,
+				strokeWidth,
+				strokeColor,
+				shadowBlur,
+				shadowColor,
+				karaokeMode,
+				wordTimings,
+			};
+		})(),
 	};
 }
 

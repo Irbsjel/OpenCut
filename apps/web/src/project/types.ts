@@ -30,9 +30,16 @@ export interface TProjectSettings {
 	fps: FrameRate;
 	canvasSize: TCanvasSize;
 	canvasSizeMode?: "preset" | "custom";
+	canvasFitMode?: "contain" | "cover";
+	userSelectedFormat?: boolean;
 	lastCustomCanvasSize?: TCanvasSize | null;
 	originalCanvasSize?: TCanvasSize | null;
 	background: TBackground;
+	/**
+	 * When true, preview playback wraps back to the start of the timeline
+	 * instead of pausing once the playhead reaches the end. Defaults to false.
+	 */
+	loop?: boolean;
 }
 
 export interface TTimelineViewState {

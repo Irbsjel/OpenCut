@@ -52,17 +52,19 @@ export class InsertElementCommand extends Command {
 			return;
 		}
 
-		const totalElementsInTimeline =
-			this.savedState.main.elements.length +
+		const totalVisualElementsInTimeline =
+			this.savedState.main.elements.filter(
+				(el) => el.type === "video" || el.type === "image",
+			).length +
 			this.savedState.overlay.reduce(
-				(total, track) => total + track.elements.length,
-				0,
-			) +
-			this.savedState.audio.reduce(
-				(total, track) => total + track.elements.length,
+				(total, track) =>
+					total +
+					track.elements.filter(
+						(el) => el.type === "video" || el.type === "image",
+					).length,
 				0,
 			);
-		const isFirstElement = totalElementsInTimeline === 0;
+		const isFirstVisualElement = totalVisualElementsInTimeline === 0;
 
 		const newElement = this.buildElement({ element: this.element });
 		const updateResult = this.applyPlacementResult({
@@ -80,14 +82,18 @@ export class InsertElementCommand extends Command {
 		const isVisualMedia =
 			newElement.type === "video" || newElement.type === "image";
 
-		if (isFirstElement && isVisualMedia) {
+		if (isFirstVisualElement && isVisualMedia) {
 			const mediaAssets = editor.media.getAssets();
 			const activeProject = editor.project.getActive();
 			const asset = mediaAssets.find(
 				(item: MediaAsset) => item.id === newElement.mediaId,
 			);
 
-			if (asset?.width && asset?.height) {
+			if (
+				asset?.width &&
+				asset?.height &&
+				activeProject?.settings.canvasSizeMode !== "custom"
+			) {
 				const nextCanvasSize = { width: asset.width, height: asset.height };
 				const shouldSetOriginalCanvasSize =
 					!activeProject?.settings.originalCanvasSize;

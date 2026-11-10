@@ -156,6 +156,7 @@ export function SettingsView() {
 				...(shouldUpdateCanvasSizeMode
 					? { canvasSizeMode: "custom" as const }
 					: {}),
+				userSelectedFormat: true,
 				lastCustomCanvasSize: canvasSize,
 			},
 		});
@@ -180,6 +181,7 @@ export function SettingsView() {
 				...(shouldUpdateCanvasSizeMode
 					? { canvasSizeMode: "preset" as const }
 					: {}),
+				userSelectedFormat: true,
 			},
 		});
 	};

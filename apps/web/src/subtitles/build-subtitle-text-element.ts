@@ -256,14 +256,76 @@ export function buildSubtitleTextElement({
 	index,
 	caption,
 	canvasSize,
+	preset,
+	verticalAlign,
 }: {
 	index: number;
 	caption: SubtitleCue;
 	canvasSize: { width: number; height: number };
+	preset?: {
+		id: string;
+		fontFamily: string;
+		fontSize: number;
+		fontWeight: "normal" | "bold";
+		color: string;
+		accentColor: string;
+		uppercase?: boolean;
+		strokeWidth: number;
+		strokeColor: string;
+		shadowBlur: number;
+		shadowColor: string;
+		backgroundEnabled: boolean;
+		backgroundColor: string;
+		cornerRadius: number;
+		paddingX: number;
+		paddingY: number;
+		animIn: string;
+		animInDuration: number;
+		animLoop: string;
+		animLoopSpeed: number;
+		animLoopIntensity: number;
+		animOut: string;
+		animOutDuration: number;
+		letterAnimation: string;
+	};
+	verticalAlign?: "top" | "middle" | "bottom";
 }): CreateTextElement {
 	const ctx = createMeasurementContext();
+	const effectiveStyle: SubtitleStyleOverrides = {
+		...(caption.style ?? {}),
+		...(preset
+			? {
+					fontFamily: preset.fontFamily,
+					fontSize: preset.fontSize,
+					fontWeight: preset.fontWeight,
+					color: preset.color,
+					background: {
+						enabled: preset.backgroundEnabled,
+						color: preset.backgroundColor,
+						cornerRadius: preset.cornerRadius,
+						paddingX: preset.paddingX,
+						paddingY: preset.paddingY,
+					},
+					placement: {
+						verticalAlign:
+							verticalAlign ??
+							caption.style?.placement?.verticalAlign ??
+							"bottom",
+						marginVerticalRatio:
+							(verticalAlign ?? "bottom") === "bottom" ? 0.12 : 0.08,
+					},
+				}
+			: verticalAlign
+				? {
+						placement: {
+							verticalAlign,
+							marginVerticalRatio: verticalAlign === "bottom" ? 0.12 : 0.08,
+						},
+					}
+				: {}),
+	};
 	const style = resolveSubtitleStyle({
-		style: caption.style,
+		style: effectiveStyle,
 	});
 	const fontFamily = quoteFontFamily({
 		fontFamily: style.fontFamily,
@@ -278,7 +340,10 @@ export function buildSubtitleTextElement({
 		placement: style.placement,
 	});
 
-	let content = caption.text;
+	const rawText = preset?.uppercase
+		? caption.text.toUpperCase()
+		: caption.text;
+	let content = rawText;
 	let positionX = 0;
 	let positionY = 0;
 
@@ -287,7 +352,7 @@ export function buildSubtitleTextElement({
 		setCanvasLetterSpacing({ ctx, letterSpacingPx: style.letterSpacing });
 		content = wrapSubtitleText({
 			ctx,
-			text: caption.text,
+			text: rawText,
 			maxWidth,
 		});
 		const measurement = measureWrappedTextBlock({
@@ -312,9 +377,22 @@ export function buildSubtitleTextElement({
 		});
 	}
 
+	const wordTimings =
+		Array.isArray(caption.words) && caption.words.length > 0
+			? caption.words.map((w) => ({
+					word: preset?.uppercase ? w.word.toUpperCase() : w.word,
+					startOffset: Number(
+						Math.max(0, w.start - caption.startTime).toFixed(3),
+					),
+					endOffset: Number(
+						Math.max(0.05, w.end - caption.startTime).toFixed(3),
+					),
+				}))
+			: undefined;
+
 	return {
 		...DEFAULTS.text.element,
-		name: `Caption ${index + 1}`,
+		name: `Subtítulo ${index + 1}`,
 		duration: mediaTimeFromSeconds({ seconds: caption.duration }),
 		startTime: mediaTimeFromSeconds({ seconds: caption.startTime }),
 		params: {
@@ -343,6 +421,25 @@ export function buildSubtitleTextElement({
 				style.background.offsetY ?? DEFAULTS.text.background.offsetY,
 			"transform.positionX": positionX,
 			"transform.positionY": positionY,
+			isSubtitle: true,
+			presetId: preset?.id ?? "hormozi",
+			strokeWidth: preset?.strokeWidth ?? 5,
+			strokeColor: preset?.strokeColor ?? "#000000",
+			shadowBlur: preset?.shadowBlur ?? 10,
+			shadowColor: preset?.shadowColor ?? "rgba(0,0,0,0.85)",
+			karaokeMode:
+				preset?.karaokeMode ??
+				(preset?.id === "karaoke-pill" ? "pill" : "highlight"),
+			letterAnimationColor: preset?.accentColor ?? "#facc15",
+			letterAnimation: preset?.letterAnimation ?? "word-karaoke",
+			animIn: preset?.animIn ?? "zoom-in",
+			animInDuration: preset?.animInDuration ?? 0.16,
+			animLoop: preset?.animLoop ?? "letter-karaoke",
+			animLoopSpeed: preset?.animLoopSpeed ?? 1.0,
+			animLoopIntensity: preset?.animLoopIntensity ?? 1.1,
+			animOut: preset?.animOut ?? "none",
+			animOutDuration: preset?.animOutDuration ?? 0.12,
+			...(wordTimings ? { wordTimings: JSON.stringify(wordTimings) } : {}),
 		},
 	};
 }

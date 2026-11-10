@@ -23,6 +23,7 @@ import { canToggleSourceAudio } from "@/timeline/audio-separation";
 import {
 	activateScope,
 	clearActiveScope,
+	deleteActiveScope,
 	type ScopeEntry,
 } from "@/selection/scope";
 import { useCommittedRef } from "@/hooks/use-committed-ref";
@@ -300,6 +301,9 @@ export function useEditorActions() {
 	useActionHandler(
 		"delete-selected",
 		() => {
+			if (deleteActiveScope()) {
+				return;
+			}
 			switch (editor.selection.getActiveSelectionKind()) {
 				case "mask-points":
 					if (!selectedMaskPointSelection) {

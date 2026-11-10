@@ -32,7 +32,9 @@ export function usePreviewInteraction({
 			isShiftHeld: () => isShiftHeldRef.current,
 		},
 		scene: {
-			getTracks: () => editor.scenes.getActiveScene().tracks,
+			getTracks: () =>
+				editor.timeline.getPreviewTracks() ??
+				editor.scenes.getActiveScene().tracks,
 			getCurrentTime: () => editor.playback.getCurrentTime(),
 			getMediaAssets: () => editor.media.getAssets(),
 			getCanvasSize: () => editor.project.getActive().settings.canvasSize,

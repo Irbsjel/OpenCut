@@ -3,12 +3,23 @@ import type {
 	TranscriptionResult,
 	TranscriptionProgress,
 	TranscriptionModelId,
+	TranscriptionSegment,
 } from "@/transcription/types";
 import {
 	DEFAULT_TRANSCRIPTION_MODEL,
 	TRANSCRIPTION_MODELS,
 } from "@/transcription/models";
+import { DEFAULT_TRANSCRIPTION_SAMPLE_RATE } from "@/transcription/audio";
+import { decodeAudioToFloat32 } from "@/media/audio";
 import type { WorkerMessage, WorkerResponse } from "./worker";
+
+export interface TimelineClipDescriptor {
+	mediaId: string;
+	trackType: string;
+	startTimeSec: number;
+	durationSec: number;
+	trimStartSec: number;
+}
 
 type ProgressCallback = (progress: TranscriptionProgress) => void;
 
@@ -17,6 +28,131 @@ class TranscriptionService {
 	private currentModelId: TranscriptionModelId | null = null;
 	private isInitialized = false;
 	private isInitializing = false;
+
+	async transcribeTimelineClips({
+		clips,
+		language = "auto",
+		onProgress,
+	}: {
+		clips: TimelineClipDescriptor[];
+		language?: TranscriptionLanguage;
+		onProgress?: ProgressCallback;
+	}): Promise<TranscriptionResult | null> {
+		if (!clips || clips.length === 0) return null;
+
+		onProgress?.({
+			status: "transcribing",
+			progress: 25,
+			message: "Transcribing timeline audio...",
+		});
+
+		const endpoints = ["/videos/api/transcribe", "/api/transcribe"];
+		for (const endpoint of endpoints) {
+			try {
+				const resp = await fetch(endpoint, {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({
+						language: language ?? "auto",
+						clips,
+					}),
+				});
+				if (!resp.ok) continue;
+
+				const data = (await resp.json()) as {
+					ok?: boolean;
+					engine?: string;
+					language?: string;
+					text?: string;
+					segments?: TranscriptionSegment[];
+				};
+				if (data?.ok && Array.isArray(data.segments)) {
+					onProgress?.({
+						status: "complete",
+						progress: 100,
+						message: "Transcription complete",
+					});
+					return {
+						text: data.text ?? "",
+						segments: data.segments,
+						language: data.language ?? language,
+						engine: data.engine ?? "gemini-audio-chunked",
+					};
+				}
+			} catch {
+				// try next endpoint
+			}
+		}
+
+		return null;
+	}
+
+	async transcribeAudioBlob({
+		audioBlob,
+		language = "auto",
+		modelId = DEFAULT_TRANSCRIPTION_MODEL,
+		onProgress,
+	}: {
+		audioBlob: Blob;
+		language?: TranscriptionLanguage;
+		modelId?: TranscriptionModelId;
+		onProgress?: ProgressCallback;
+	}): Promise<TranscriptionResult> {
+		onProgress?.({
+			status: "transcribing",
+			progress: 25,
+			message: "Capturando voz con Whisper Turbo...",
+		});
+
+		const endpoints = ["/videos/api/transcribe", "/api/transcribe"];
+		for (const endpoint of endpoints) {
+			try {
+				const form = new FormData();
+				form.append("audio", audioBlob, "timeline-audio.wav");
+				form.append("language", language ?? "auto");
+
+				const resp = await fetch(endpoint, {
+					method: "POST",
+					body: form,
+				});
+				if (!resp.ok) continue;
+
+				const data = (await resp.json()) as {
+					ok?: boolean;
+					engine?: string;
+					language?: string;
+					text?: string;
+					segments?: TranscriptionSegment[];
+				};
+				if (data?.ok && Array.isArray(data.segments)) {
+					onProgress?.({
+						status: "complete",
+						progress: 100,
+						message: "Transcripción completada",
+					});
+					return {
+						text: data.text ?? "",
+						segments: data.segments,
+						language: data.language ?? language,
+						engine: data.engine ?? "faster-whisper",
+					};
+				}
+			} catch {
+				// try next endpoint or fallback to local WebWorker
+			}
+		}
+
+		const { samples } = await decodeAudioToFloat32({
+			audioBlob,
+			sampleRate: DEFAULT_TRANSCRIPTION_SAMPLE_RATE,
+		});
+		return this.transcribe({
+			audioData: samples,
+			language,
+			modelId,
+			onProgress,
+		});
+	}
 
 	async transcribe({
 		audioData,
@@ -55,6 +191,7 @@ class TranscriptionService {
 							text: response.text,
 							segments: response.segments,
 							language,
+							engine: "browser-whisper",
 						});
 						break;
 

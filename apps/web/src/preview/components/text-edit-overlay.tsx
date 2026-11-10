@@ -30,37 +30,102 @@ export function TextEditOverlay({
 	const editor = useEditor();
 	const viewport = usePreviewViewport();
 	const divRef = useRef<HTMLDivElement>(null);
+	const rafIdRef = useRef<number | null>(null);
+	const latestTextRef = useRef<string>(
+		typeof element.params.content === "string" ? element.params.content : "",
+	);
+	const elementParamsRef = useRef(element.params);
+	elementParamsRef.current = element.params;
+
+	const flushPreview = useCallback(
+		(text: string) => {
+			if (rafIdRef.current !== null) {
+				cancelAnimationFrame(rafIdRef.current);
+				rafIdRef.current = null;
+			}
+			editor.timeline.previewElements({
+				updates: [
+					{
+						trackId,
+						elementId,
+						updates: {
+							params: {
+								...elementParamsRef.current,
+								content: text,
+							},
+						},
+					},
+				],
+			});
+		},
+		[editor.timeline, trackId, elementId],
+	);
 
 	useEffect(() => {
 		const div = divRef.current;
 		if (!div) return;
+		const initialText =
+			typeof elementParamsRef.current.content === "string"
+				? elementParamsRef.current.content
+				: "";
+		div.textContent = initialText;
+		latestTextRef.current = initialText;
 		div.focus();
 		const range = document.createRange();
 		range.selectNodeContents(div);
 		const selection = window.getSelection();
 		selection?.removeAllRanges();
 		selection?.addRange(range);
+		return () => {
+			if (rafIdRef.current !== null) {
+				cancelAnimationFrame(rafIdRef.current);
+				rafIdRef.current = null;
+			}
+		};
 	}, []);
 
 	const handleInput = useCallback(() => {
 		const div = divRef.current;
 		if (!div) return;
 		const text = div.innerText;
-		editor.timeline.previewElements({
-			updates: [{ trackId, elementId, updates: { params: { content: text } } }],
+		latestTextRef.current = text;
+		if (rafIdRef.current !== null) {
+			cancelAnimationFrame(rafIdRef.current);
+		}
+		rafIdRef.current = requestAnimationFrame(() => {
+			rafIdRef.current = null;
+			editor.timeline.previewElements({
+				updates: [
+					{
+						trackId,
+						elementId,
+						updates: {
+							params: {
+								...elementParamsRef.current,
+								content: latestTextRef.current,
+							},
+						},
+					},
+				],
+			});
 		});
 	}, [editor.timeline, trackId, elementId]);
+
+	const handleCommit = useCallback(() => {
+		flushPreview(latestTextRef.current);
+		onCommit();
+	}, [flushPreview, onCommit]);
 
 	const handleKeyDown = useCallback(
 		({ event }: { event: React.KeyboardEvent }) => {
 			const { key } = event;
 			if (key === "Escape") {
 				event.preventDefault();
-				onCommit();
+				handleCommit();
 				return;
 			}
 		},
-		[onCommit],
+		[handleCommit],
 	);
 
 	const canvasSize = editor.project.getActive().settings.canvasSize;
@@ -146,11 +211,9 @@ export function TextEditOverlay({
 					minWidth: 1,
 				}}
 				onInput={handleInput}
-				onBlur={onCommit}
+				onBlur={handleCommit}
 				onKeyDown={(event) => handleKeyDown({ event })}
-			>
-				{textParams.content}
-			</div>
+			/>
 		</div>
 	);
 }

@@ -50,6 +50,7 @@ import type { MediaAsset } from "@/media/types";
 import { cn } from "@/utils/ui";
 import {
 	CloudUploadIcon,
+	Delete02Icon,
 	GridViewIcon,
 	LeftToRightListDashIcon,
 	SortingOneNineIcon,
@@ -72,10 +73,39 @@ export function MediaView() {
 		mediaSortBy,
 		mediaSortOrder,
 		setMediaSort,
+		setActiveTab,
 	} = useAssetsPanelStore();
 
 	const [isProcessing, setIsProcessing] = useState(false);
+	const [isImportingFlow, setIsImportingFlow] = useState(false);
 	const [progress, setProgress] = useState(0);
+
+	const handleQuickImportFlow = async () => {
+		const api = (
+			window as Window & {
+				__opencutNervApi?: {
+					importLatestFlowVideo?: (opts?: {
+						addToTimeline?: boolean;
+					}) => Promise<{ ok: boolean; fileName?: string; error?: string }>;
+				};
+			}
+		).__opencutNervApi;
+		if (!api?.importLatestFlowVideo) {
+			toast.error("Puente NERV no disponible aún");
+			return;
+		}
+		setIsImportingFlow(true);
+		try {
+			const res = await api.importLatestFlowVideo({ addToTimeline: true });
+			if (!res?.ok) {
+				toast.error(
+					res?.error || "No se pudo importar el video desde Google Flow",
+				);
+			}
+		} finally {
+			setIsImportingFlow(false);
+		}
+	};
 
 	const processFiles = async ({ files }: { files: File[] }) => {
 		if (!files || files.length === 0) return;
@@ -205,9 +235,28 @@ export function MediaView() {
 					/>
 				}
 				className={cn(isDragOver && "bg-accent/30")}
-				contentClassName="h-full"
+				contentClassName="h-full flex flex-col gap-2"
 				{...dragProps}
 			>
+				<div className="flex items-center gap-1.5">
+					<button
+						type="button"
+						disabled={isImportingFlow || isProcessing}
+						onClick={handleQuickImportFlow}
+						data-opencut-action="assets-import-flow"
+						className="flex h-7 flex-1 items-center justify-center gap-1.5 rounded-md bg-cyan-600/90 px-2.5 text-[11px] font-medium text-white transition hover:bg-cyan-500 disabled:opacity-50"
+					>
+						{isImportingFlow ? "⏳ Importando..." : "📥 Traer Video de Flow"}
+					</button>
+					<button
+						type="button"
+						onClick={() => setActiveTab("ai")}
+						data-opencut-action="assets-open-ai-studio"
+						className="border-border bg-muted/40 text-foreground hover:bg-muted flex h-7 shrink-0 items-center justify-center rounded-md border px-2.5 text-[11px] font-medium transition"
+					>
+						✨ AI Studio
+					</button>
+				</div>
 				{isDragOver || filteredMediaItems.length === 0 ? (
 					<MediaDragOverlay
 						isVisible={true}
@@ -222,7 +271,7 @@ export function MediaView() {
 						revealId={highlightMediaId}
 						onRevealComplete={clearHighlight}
 					>
-						<MediaScopeRegistrar />
+						<MediaScopeRegistrar projectId={activeProject.metadata.id} />
 						<MediaItemList
 							items={filteredMediaItems}
 							mode={mediaViewMode}
@@ -235,8 +284,15 @@ export function MediaView() {
 	);
 }
 
-function MediaScopeRegistrar() {
-	useSelectionScope();
+function MediaScopeRegistrar({ projectId }: { projectId: string }) {
+	useSelectionScope({
+		onDelete: (selectedIds) => {
+			invokeAction("remove-media-assets", {
+				projectId,
+				assetIds: selectedIds,
+			});
+		},
+	});
 	return null;
 }
 
@@ -364,7 +420,10 @@ function MediaItemList({
 		>
 			{items.map((item) => (
 				<MediaItemWithContextMenu item={item} onRemove={onRemove} key={item.id}>
-					<SelectableItem className={cn(!isGrid && "w-full")} id={item.id}>
+					<SelectableItem
+						className={cn("group/asset", !isGrid && "w-full")}
+						id={item.id}
+					>
 						<MediaAssetDraggable
 							item={item}
 							preview={
@@ -376,6 +435,18 @@ function MediaItemList({
 							variant={isGrid ? "card" : "compact"}
 							isRounded={isGrid ? false : undefined}
 						/>
+						<button
+							type="button"
+							onClick={(event) => {
+								event.preventDefault();
+								event.stopPropagation();
+								onRemove({ event, ids: [item.id] });
+							}}
+							title="Eliminar archivo del proyecto (Supr / Delete)"
+							className="pointer-events-auto absolute top-1 right-1 z-20 hidden size-5 cursor-pointer items-center justify-center rounded bg-black/75 text-rose-400 transition hover:bg-rose-600 hover:text-white group-hover/asset:flex group-aria-selected/asset:flex"
+						>
+							<HugeiconsIcon icon={Delete02Icon} className="size-3.5" />
+						</button>
 					</SelectableItem>
 				</MediaItemWithContextMenu>
 			))}
@@ -434,6 +505,28 @@ function MediaTypePlaceholder({
 	);
 }
 
+function MediaFormatBadge({
+	width,
+	height,
+}: {
+	width?: number;
+	height?: number;
+}) {
+	if (!width || !height || width <= 0 || height <= 0) return null;
+	const ratio = width / height;
+	let label = `${width}×${height}`;
+	if (Math.abs(ratio - 9 / 16) < 0.06) label = "9:16";
+	else if (Math.abs(ratio - 16 / 9) < 0.06) label = "16:9";
+	else if (Math.abs(ratio - 1) < 0.05) label = "1:1";
+	else if (Math.abs(ratio - 4 / 3) < 0.06) label = "4:3";
+
+	return (
+		<div className="pointer-events-none absolute bottom-1 left-1 rounded bg-black/70 px-1 text-[10px] font-medium text-white/90">
+			{label}
+		</div>
+	);
+}
+
 function MediaPreview({
 	item,
 	variant = "grid",
@@ -442,19 +535,49 @@ function MediaPreview({
 	variant?: "grid" | "compact";
 }) {
 	const shouldShowDurationBadge = variant === "grid";
+	const isVertical = Boolean(
+		item.width && item.height && item.width < item.height,
+	);
 
 	if (item.type === "image") {
+		const src = item.url ?? "";
 		return (
-			<div className="relative flex size-full items-center justify-center bg-muted">
-				<Image
-					src={item.url ?? ""}
-					alt={item.name}
-					fill
-					sizes="100vw"
-					className="object-cover"
-					loading="lazy"
-					unoptimized
-				/>
+			<div className="relative flex size-full items-center justify-center overflow-hidden rounded bg-muted">
+				{isVertical ? (
+					<>
+						<Image
+							src={src}
+							alt=""
+							fill
+							sizes="100vw"
+							className="scale-110 object-cover opacity-35 blur-sm"
+							loading="lazy"
+							unoptimized
+						/>
+						<Image
+							src={src}
+							alt={item.name}
+							fill
+							sizes="100vw"
+							className="object-contain"
+							loading="lazy"
+							unoptimized
+						/>
+					</>
+				) : (
+					<Image
+						src={src}
+						alt={item.name}
+						fill
+						sizes="100vw"
+						className="object-cover"
+						loading="lazy"
+						unoptimized
+					/>
+				)}
+				{shouldShowDurationBadge ? (
+					<MediaFormatBadge width={item.width} height={item.height} />
+				) : null}
 			</div>
 		);
 	}
@@ -462,18 +585,44 @@ function MediaPreview({
 	if (item.type === "video") {
 		if (item.thumbnailUrl) {
 			return (
-				<div className="relative size-full">
-					<Image
-						src={item.thumbnailUrl}
-						alt={item.name}
-						fill
-						sizes="100vw"
-						className="rounded object-cover"
-						loading="lazy"
-						unoptimized
-					/>
+				<div className="relative size-full overflow-hidden rounded bg-muted">
+					{isVertical ? (
+						<>
+							<Image
+								src={item.thumbnailUrl}
+								alt=""
+								fill
+								sizes="100vw"
+								className="scale-110 object-cover opacity-35 blur-sm"
+								loading="lazy"
+								unoptimized
+							/>
+							<Image
+								src={item.thumbnailUrl}
+								alt={item.name}
+								fill
+								sizes="100vw"
+								className="rounded object-contain"
+								loading="lazy"
+								unoptimized
+							/>
+						</>
+					) : (
+						<Image
+							src={item.thumbnailUrl}
+							alt={item.name}
+							fill
+							sizes="100vw"
+							className="rounded object-cover"
+							loading="lazy"
+							unoptimized
+						/>
+					)}
 					{shouldShowDurationBadge ? (
-						<MediaDurationBadge duration={item.duration} />
+						<>
+							<MediaFormatBadge width={item.width} height={item.height} />
+							<MediaDurationBadge duration={item.duration} />
+						</>
 					) : null}
 				</div>
 			);

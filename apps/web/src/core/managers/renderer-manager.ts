@@ -147,9 +147,20 @@ export class RendererManager {
 		onProgress?: ({ progress }: { progress: number }) => void;
 		onCancel?: () => boolean;
 	}): Promise<ExportResult> {
-		const { format, quality, fps, includeAudio } = options;
+		const {
+			format,
+			quality,
+			fps,
+			includeAudio,
+			canvasSize: overrideCanvasSize,
+			fitMode: overrideFitMode,
+		} = options;
 
 		try {
+			if (this.editor.playback.getIsPlaying()) {
+				this.editor.playback.pause();
+			}
+
 			const tracks = this.editor.scenes.getActiveScene().tracks;
 			const mediaAssets = this.editor.media.getAssets();
 			const activeProject = this.editor.project.getActive();
@@ -164,16 +175,26 @@ export class RendererManager {
 			}
 
 			const exportFps = fps ?? activeProject.settings.fps;
-			const canvasSize = activeProject.settings.canvasSize;
+			const canvasSize = overrideCanvasSize ?? activeProject.settings.canvasSize;
+			const canvasFitMode =
+				overrideFitMode ?? activeProject.settings.canvasFitMode ?? "contain";
 
 			let audioBuffer: AudioBuffer | null = null;
 			if (includeAudio) {
 				onProgress?.({ progress: 0.05 });
-				audioBuffer = await createTimelineAudioBuffer({
-					tracks,
-					mediaAssets,
-					duration,
-				});
+				try {
+					audioBuffer = await createTimelineAudioBuffer({
+						tracks,
+						mediaAssets,
+						duration,
+					});
+				} catch (audioError) {
+					console.warn(
+						"Audio mix generation failed, continuing video export without audio:",
+						audioError,
+					);
+					audioBuffer = null;
+				}
 			}
 
 			const scene = buildScene({
@@ -182,6 +203,7 @@ export class RendererManager {
 				duration,
 				canvasSize,
 				background: activeProject.settings.background,
+				canvasFitMode,
 			});
 
 			const exporter = new SceneExporter({

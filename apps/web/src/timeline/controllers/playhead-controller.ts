@@ -159,10 +159,12 @@ export class PlayheadController {
 
 	// --- Public non-session methods ---
 
+	private updateTickCount = 0;
+
 	/**
-	 * Imperatively updates the playhead DOM element's `left` style.
+	 * Imperatively updates the playhead DOM element's GPU transform.
 	 * Called on scroll and playback events to avoid React re-renders
-	 * during animation frame updates.
+	 * and DOM layout/reflow during animation frame updates.
 	 */
 	updatePlayheadLeft(time: MediaTime): void {
 		const playheadEl = this.config.getPlayheadEl();
@@ -173,7 +175,9 @@ export class PlayheadController {
 			zoomLevel: this.config.zoomLevel,
 		});
 		const scrollLeft = this.config.getRulerScrollEl()?.scrollLeft ?? 0;
-		playheadEl.style.left = `${getCenteredLineLeft({ centerPixel }) - scrollLeft}px`;
+		const x = getCenteredLineLeft({ centerPixel }) - scrollLeft;
+		playheadEl.style.left = "0px";
+		playheadEl.style.transform = `translate3d(${x}px, 0, 0)`;
 	}
 
 	/**
@@ -184,7 +188,12 @@ export class PlayheadController {
 		this.updatePlayheadLeft(time);
 
 		// Auto-scroll only during playback, not while scrubbing.
-		if (!this.config.getIsPlaying() || this.session.kind === "scrubbing")
+		// Check viewport bounds every 6 frames to avoid synchronous DOM layout queries on every frame.
+		if (
+			!this.config.getIsPlaying() ||
+			this.session.kind === "scrubbing" ||
+			++this.updateTickCount % 6 !== 0
+		)
 			return;
 
 		const rulerViewport = this.config.getRulerScrollEl();

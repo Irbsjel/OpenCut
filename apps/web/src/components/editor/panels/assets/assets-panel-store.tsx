@@ -17,6 +17,7 @@ import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
 
 export const TAB_KEYS = [
 	"media",
+	"ai",
 	"sounds",
 	"text",
 	"stickers",
@@ -39,6 +40,10 @@ export const tabs = {
 	media: {
 		icon: createHugeiconsIcon({ icon: Folder03Icon }),
 		label: "Media",
+	},
+	ai: {
+		icon: createHugeiconsIcon({ icon: ColorsIcon }),
+		label: "AI Studio",
 	},
 	sounds: {
 		icon: createHugeiconsIcon({ icon: HeadphonesIcon }),
@@ -88,6 +93,15 @@ interface AssetsPanelStore {
 	requestRevealMedia: (mediaId: string) => void;
 	clearHighlight: () => void;
 
+	/* Transitions (CapCut Cut Junction & Drag-Drop) */
+	selectedTransitionCutId: string | null;
+	setSelectedTransitionCutId: (cutId: string | null) => void;
+	openTransitionForCut: (cutId: string) => void;
+	draggingTransition: { presetId: string; durationSec: number } | null;
+	setDraggingTransition: (
+		payload: { presetId: string; durationSec: number } | null,
+	) => void;
+
 	/* Media */
 	mediaViewMode: MediaViewMode;
 	setMediaViewMode: (mode: MediaViewMode) => void;
@@ -105,6 +119,13 @@ export const useAssetsPanelStore = create<AssetsPanelStore>()(
 			requestRevealMedia: (mediaId) =>
 				set({ activeTab: "media", highlightMediaId: mediaId }),
 			clearHighlight: () => set({ highlightMediaId: null }),
+			selectedTransitionCutId: null,
+			setSelectedTransitionCutId: (cutId) =>
+				set({ selectedTransitionCutId: cutId }),
+			openTransitionForCut: (cutId) =>
+				set({ activeTab: "transitions", selectedTransitionCutId: cutId }),
+			draggingTransition: null,
+			setDraggingTransition: (payload) => set({ draggingTransition: payload }),
 			mediaViewMode: "grid",
 			setMediaViewMode: (mode) => set({ mediaViewMode: mode }),
 			mediaSortBy: "name",

@@ -24,10 +24,12 @@ import {
 } from "@hugeicons/core-free-icons";
 import { ElementParamsTab } from "./components/element-params-tab";
 import { ClipEffectsTab, StandaloneEffectTab } from "@/effects/components/effects-tab";
+import { ClipAnimationTab } from "@/animation/components/clip-animation-tab";
 import { MasksTab } from "@/masks/components/masks-tab";
 import { SpeedTab } from "@/speed/components/speed-tab";
 import { GraphicTab } from "@/graphics/components/graphic-tab";
 import { OcShapesIcon } from "@/components/icons";
+import { Sparkles } from "lucide-react";
 
 const TRANSFORM_PARAM_KEYS = [
 	"transform.positionX",
@@ -42,6 +44,10 @@ const AUDIO_PARAM_KEYS = ["volume", "muted"] as const;
 const TEXT_PARAM_KEYS = [
 	"content",
 	"fontFamily",
+	"letterAnimation",
+	"letterAnimationSpeed",
+	"letterAnimationIntensity",
+	"letterAnimationColor",
 	"fontSize",
 	"color",
 	"textAlign",
@@ -82,7 +88,7 @@ function buildTransformTab({
 }): PropertiesTabDef {
 	return {
 		id: "transform",
-		label: "Transform",
+		label: "Posición y Keyframes (◆)",
 		icon: <HugeiconsIcon icon={ArrowExpandIcon} size={16} />,
 		content: ({ trackId }) => (
 			<ElementParamsTab
@@ -176,6 +182,21 @@ function buildClipEffectsTab({
 	};
 }
 
+function buildAnimationTab({
+	element,
+}: {
+	element: VisualElement;
+}): PropertiesTabDef {
+	return {
+		id: "animation",
+		label: "Animación (In / Bucle / Out)",
+		icon: <Sparkles className="size-4 text-sky-400" />,
+		content: ({ trackId }) => (
+			<ClipAnimationTab element={element} trackId={trackId} />
+		),
+	};
+}
+
 function buildTextTab({ element }: { element: TextElement }): PropertiesTabDef {
 	return {
 		id: "text",
@@ -229,6 +250,7 @@ function getTextConfig({
 		defaultTab: "text",
 		tabs: [
 			buildTextTab({ element }),
+			buildAnimationTab({ element }),
 			buildTransformTab({ element }),
 			buildBlendingTab({ element }),
 		],
@@ -244,8 +266,9 @@ function getVideoConfig({
 }): ElementPropertiesConfig {
 	const showAudioTab = mediaAsset?.hasAudio !== false;
 	return {
-		defaultTab: "transform",
+		defaultTab: "animation",
 		tabs: [
+			buildAnimationTab({ element }),
 			buildTransformTab({ element }),
 			...(showAudioTab ? [buildAudioTab({ element })] : []),
 			buildSpeedTab({ element }),
@@ -262,8 +285,9 @@ function getImageConfig({
 	element: ImageElement;
 }): ElementPropertiesConfig {
 	return {
-		defaultTab: "transform",
+		defaultTab: "animation",
 		tabs: [
+			buildAnimationTab({ element }),
 			buildTransformTab({ element }),
 			buildBlendingTab({ element }),
 			buildMasksTab({ element }),
@@ -278,8 +302,9 @@ function getStickerConfig({
 	element: StickerElement;
 }): ElementPropertiesConfig {
 	return {
-		defaultTab: "transform",
+		defaultTab: "animation",
 		tabs: [
+			buildAnimationTab({ element }),
 			buildTransformTab({ element }),
 			buildBlendingTab({ element }),
 			buildClipEffectsTab({ element }),
@@ -293,8 +318,9 @@ function getGraphicConfig({
 	element: GraphicElement;
 }): ElementPropertiesConfig {
 	return {
-		defaultTab: "graphic",
+		defaultTab: "animation",
 		tabs: [
+			buildAnimationTab({ element }),
 			buildGraphicTab({ element }),
 			buildTransformTab({ element }),
 			buildBlendingTab({ element }),

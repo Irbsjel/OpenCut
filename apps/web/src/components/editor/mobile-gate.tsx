@@ -18,9 +18,10 @@ export function MobileGate({ children }: MobileGateProps) {
 	const [show, setShow] = useState<boolean | null>(null);
 
 	useEffect(() => {
-		const isMobile = window.innerWidth < 1024;
+		const isSmallTouchMobile = window.innerWidth < 640 && /Android|iPhone|iPod/i.test(navigator.userAgent || "");
 		const acknowledged = localStorage.getItem(STORAGE_KEY) === "true";
-		setShow(isMobile && !acknowledged);
+		if (!isSmallTouchMobile && !acknowledged) { try { localStorage.setItem(STORAGE_KEY, "true"); } catch (_e) {} }
+		setShow(isSmallTouchMobile && !acknowledged);
 	}, []);
 
 	if (show === null) return null;

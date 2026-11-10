@@ -7,6 +7,7 @@ import type {
 	SelectedMaskPointSelection,
 } from "@/selection/editor-selection";
 import type { ElementRef } from "@/timeline/types";
+import { clearActiveScope } from "@/selection/scope";
 
 export class SelectionManager {
 	private selectedElements: ElementRef[] = [];
@@ -63,6 +64,9 @@ export class SelectionManager {
 	}
 
 	setSelectedElements({ elements }: { elements: ElementRef[] }): void {
+		if (elements.length > 0) {
+			clearActiveScope();
+		}
 		this.selectedElements = elements;
 		this.selectedKeyframes = [];
 		this.keyframeSelectionAnchor = null;

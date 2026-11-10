@@ -55,8 +55,12 @@ export class ProjectManager {
 		isExporting: false,
 		progress: 0,
 		result: null,
+		totalFrames: 0,
+		currentFrame: 0,
+		elapsedMs: 0,
 	};
 	private exportCancelRequested = false;
+	private exportStartTime = 0;
 
 	constructor(private editor: EditorCore) {}
 
@@ -79,11 +83,17 @@ export class ProjectManager {
 		await this.storageMigrationPromise;
 	}
 
-	async createNewProject({ name }: { name: string }): Promise<string> {
+	async createNewProject({
+		name,
+		id,
+	}: {
+		name: string;
+		id?: string;
+	}): Promise<string> {
 		const mainScene = buildDefaultScene({ name: "Main scene", isMain: true });
 		const newProject: TProject = {
 			metadata: {
-				id: generateUUID(),
+				id: id || generateUUID(),
 				name,
 				duration: getProjectDurationFromScenes({ scenes: [mainScene] }),
 				createdAt: new Date(),
@@ -156,7 +166,7 @@ export class ProjectManager {
 
 			await this.editor.media.loadProjectMedia({ projectId: id });
 
-			await loadFonts({
+			void loadFonts({
 				families: [
 					...new Set(
 						(project.scenes ?? []).flatMap((scene) =>
@@ -167,14 +177,16 @@ export class ProjectManager {
 			});
 
 			if (!project.metadata.thumbnail) {
-				try {
-					const didUpdateThumbnail = await this.updateThumbnailFromTimeline();
-					if (didUpdateThumbnail) {
-						await this.saveCurrentProject();
+				void (async () => {
+					try {
+						const didUpdateThumbnail = await this.updateThumbnailFromTimeline();
+						if (didUpdateThumbnail) {
+							await this.saveCurrentProject();
+						}
+					} catch (error) {
+						console.error("Failed to generate project thumbnail:", error);
 					}
-				} catch (error) {
-					console.error("Failed to generate project thumbnail:", error);
-				}
+				})();
 			}
 		} catch (error) {
 			console.error("Failed to load project:", error);
@@ -211,13 +223,41 @@ export class ProjectManager {
 
 	async export({ options }: { options: ExportOptions }): Promise<ExportResult> {
 		this.exportCancelRequested = false;
-		this.exportState = { isExporting: true, progress: 0, result: null };
+		const activeProject = this.editor.project.getActiveOrNull();
+		const durationTicks = this.editor.timeline.getTotalDuration();
+		const durationSec = Math.max(0, durationTicks / 120000);
+		const fpsObj = options.fps ?? activeProject?.settings.fps ?? DEFAULT_FPS;
+		const fpsNum =
+			typeof fpsObj === "number"
+				? fpsObj
+				: fpsObj.numerator / Math.max(1, fpsObj.denominator);
+		const totalFrames = Math.max(1, Math.round(durationSec * fpsNum));
+
+		this.exportStartTime = Date.now();
+		this.exportState = {
+			isExporting: true,
+			progress: 0,
+			result: null,
+			totalFrames,
+			currentFrame: 0,
+			elapsedMs: 0,
+		};
 		this.notify();
 
 		const result = await this.editor.renderer.exportProject({
 			options,
 			onProgress: ({ progress }) => {
-				this.exportState = { ...this.exportState, progress };
+				const elapsedMs = Date.now() - this.exportStartTime;
+				const currentFrame = Math.min(
+					totalFrames,
+					Math.floor(progress * totalFrames),
+				);
+				this.exportState = {
+					...this.exportState,
+					progress,
+					currentFrame,
+					elapsedMs,
+				};
 				this.notify();
 			},
 			onCancel: () => this.exportCancelRequested,
@@ -227,6 +267,9 @@ export class ProjectManager {
 			isExporting: false,
 			progress: this.exportState.progress,
 			result,
+			totalFrames: this.exportState.totalFrames,
+			currentFrame: this.exportState.totalFrames,
+			elapsedMs: this.exportState.elapsedMs,
 		};
 		this.notify();
 
@@ -238,7 +281,14 @@ export class ProjectManager {
 	}
 
 	clearExportState(): void {
-		this.exportState = { isExporting: false, progress: 0, result: null };
+		this.exportState = {
+			isExporting: false,
+			progress: 0,
+			result: null,
+			totalFrames: 0,
+			currentFrame: 0,
+			elapsedMs: 0,
+		};
 		this.notify();
 	}
 

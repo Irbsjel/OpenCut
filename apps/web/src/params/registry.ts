@@ -15,6 +15,7 @@ import {
 	CORNER_RADIUS_MAX,
 	CORNER_RADIUS_MIN,
 } from "@/text/background";
+import { LETTER_ANIMATION_OPTIONS } from "@/text/letter-animation";
 
 export type ElementParamDefinition<TKey extends string = string> =
 	ParamDefinition<TKey> & {
@@ -96,7 +97,7 @@ const BLEND_MODE_OPTIONS: Array<{ value: BlendMode; label: string }> = [
 const visualElementParams: ElementParamDefinition[] = [
 	{
 		key: "transform.positionX",
-		label: "Position X",
+		label: "Posición X",
 		type: "number",
 		default: DEFAULTS.element.transform.position.x,
 		min: -100_000,
@@ -104,7 +105,7 @@ const visualElementParams: ElementParamDefinition[] = [
 	},
 	{
 		key: "transform.positionY",
-		label: "Position Y",
+		label: "Posición Y",
 		type: "number",
 		default: DEFAULTS.element.transform.position.y,
 		min: -100_000,
@@ -112,7 +113,7 @@ const visualElementParams: ElementParamDefinition[] = [
 	},
 	{
 		key: "transform.scaleX",
-		label: "Scale X",
+		label: "Escala X (Zoom)",
 		type: "number",
 		default: DEFAULTS.element.transform.scaleX,
 		min: MIN_TRANSFORM_SCALE,
@@ -120,7 +121,7 @@ const visualElementParams: ElementParamDefinition[] = [
 	},
 	{
 		key: "transform.scaleY",
-		label: "Scale Y",
+		label: "Escala Y (Zoom)",
 		type: "number",
 		default: DEFAULTS.element.transform.scaleY,
 		min: MIN_TRANSFORM_SCALE,
@@ -128,7 +129,7 @@ const visualElementParams: ElementParamDefinition[] = [
 	},
 	{
 		key: "transform.rotate",
-		label: "Rotate",
+		label: "Rotación (°)",
 		type: "number",
 		default: DEFAULTS.element.transform.rotate,
 		min: -360,
@@ -137,7 +138,7 @@ const visualElementParams: ElementParamDefinition[] = [
 	},
 	{
 		key: "opacity",
-		label: "Opacity",
+		label: "Opacidad",
 		type: "number",
 		default: DEFAULTS.element.opacity,
 		min: 0,
@@ -146,7 +147,7 @@ const visualElementParams: ElementParamDefinition[] = [
 	},
 	{
 		key: "blendMode",
-		label: "Blend Mode",
+		label: "Modo de Fusión",
 		type: "select",
 		default: DEFAULTS.element.blendMode,
 		keyframable: false,
@@ -183,9 +184,47 @@ const textElementParams: ElementParamDefinition[] = [
 	},
 	{
 		key: "fontFamily",
-		label: "Font Family",
+		label: "Fuente 2026 / 2027",
 		type: "font",
-		default: "Arial",
+		default: "Montserrat",
+		keyframable: false,
+	},
+	{
+		key: "letterAnimation",
+		label: "Animación de Letras",
+		type: "select",
+		default: "pop-cascade",
+		keyframable: false,
+		options: LETTER_ANIMATION_OPTIONS.map((opt) => ({
+			value: opt.value,
+			label: `${opt.label} (${opt.badge})`,
+		})),
+	},
+	{
+		key: "letterAnimationSpeed",
+		label: "Velocidad de Animación",
+		type: "number",
+		default: 1,
+		min: 0.2,
+		max: 3,
+		step: 0.1,
+		keyframable: false,
+	},
+	{
+		key: "letterAnimationIntensity",
+		label: "Intensidad de Animación",
+		type: "number",
+		default: 1,
+		min: 0.2,
+		max: 2.5,
+		step: 0.1,
+		keyframable: false,
+	},
+	{
+		key: "letterAnimationColor",
+		label: "Color Acento / Neón",
+		type: "color",
+		default: "#38bdf8",
 		keyframable: false,
 	},
 	{

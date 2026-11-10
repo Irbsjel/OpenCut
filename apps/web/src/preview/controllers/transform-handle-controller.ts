@@ -17,12 +17,9 @@ import {
 	type SnapLine,
 } from "@/preview/preview-snap";
 import { isVisualElement } from "@/timeline/element-utils";
-import {
-	getElementLocalTime,
-	hasKeyframesForPath,
-	setChannel,
-} from "@/animation";
+import { getElementLocalTime } from "@/animation";
 import type { ElementAnimations } from "@/animation/types";
+import { applyInteractiveTransformUpdate } from "@/animation/transform-keyframes";
 import type { ParamValues } from "@/params";
 import { buildTransformFromParams, type Transform } from "@/rendering";
 import { resolveTransformAtTime } from "@/rendering/animation-values";
@@ -48,14 +45,16 @@ interface CornerScaleSession extends CapturedPointerState {
 	readonly trackId: string;
 	readonly elementId: string;
 	readonly initialTransform: Transform;
+	readonly baseTransformAtZero: Transform;
 	readonly initialParams: ParamValues;
+	readonly initialAnimations: ElementAnimations | undefined;
+	readonly localTime: number;
+	readonly isWithinRange: boolean;
 	readonly initialDistance: number;
 	readonly initialBoundsCx: number;
 	readonly initialBoundsCy: number;
 	readonly baseWidth: number;
 	readonly baseHeight: number;
-	readonly shouldClearScaleAnimation: boolean;
-	readonly animationsWithoutScale: ElementAnimations | undefined;
 }
 
 interface EdgeScaleSession extends CapturedPointerState {
@@ -64,14 +63,16 @@ interface EdgeScaleSession extends CapturedPointerState {
 	readonly trackId: string;
 	readonly elementId: string;
 	readonly initialTransform: Transform;
+	readonly baseTransformAtZero: Transform;
 	readonly initialParams: ParamValues;
+	readonly initialAnimations: ElementAnimations | undefined;
+	readonly localTime: number;
+	readonly isWithinRange: boolean;
 	readonly initialBoundsCx: number;
 	readonly initialBoundsCy: number;
 	readonly baseWidth: number;
 	readonly baseHeight: number;
 	readonly rotationRad: number;
-	readonly shouldClearScaleAnimation: boolean;
-	readonly animationsWithoutScale: ElementAnimations | undefined;
 }
 
 interface RotationSession extends CapturedPointerState {
@@ -79,7 +80,11 @@ interface RotationSession extends CapturedPointerState {
 	readonly trackId: string;
 	readonly elementId: string;
 	readonly initialTransform: Transform;
+	readonly baseTransformAtZero: Transform;
 	readonly initialParams: ParamValues;
+	readonly initialAnimations: ElementAnimations | undefined;
+	readonly localTime: number;
+	readonly isWithinRange: boolean;
 	readonly initialAngle: number;
 	readonly initialBoundsCx: number;
 	readonly initialBoundsCy: number;
@@ -99,6 +104,9 @@ interface VisualSelectionContext {
 	readonly element: VisualElement;
 	readonly bounds: ElementBounds;
 	readonly resolvedTransform: Transform;
+	readonly baseTransformAtZero: Transform;
+	readonly localTime: number;
+	readonly isWithinRange: boolean;
 }
 
 export interface PreviewViewportAdapter {
@@ -212,72 +220,6 @@ function buildSelectedWithBounds({
 	);
 }
 
-function buildCornerScaleAnimationReset({
-	animations,
-}: {
-	animations: ElementAnimations | undefined;
-}): {
-	shouldClearScaleAnimation: boolean;
-	animationsWithoutScale: ElementAnimations | undefined;
-} {
-	const shouldClearScaleAnimation =
-		hasKeyframesForPath({
-			animations,
-			propertyPath: "transform.scaleX",
-		}) ||
-		hasKeyframesForPath({
-			animations,
-			propertyPath: "transform.scaleY",
-		});
-
-	return {
-		shouldClearScaleAnimation,
-		animationsWithoutScale: shouldClearScaleAnimation
-			? setChannel({
-					animations: setChannel({
-						animations,
-						propertyPath: "transform.scaleX",
-						channel: undefined,
-					}),
-					propertyPath: "transform.scaleY",
-					channel: undefined,
-				})
-			: animations,
-	};
-}
-
-function buildEdgeScaleAnimationReset({
-	animations,
-	edge,
-}: {
-	animations: ElementAnimations | undefined;
-	edge: Edge;
-}): {
-	shouldClearScaleAnimation: boolean;
-	animationsWithoutScale: ElementAnimations | undefined;
-} {
-	const propertyPath =
-		edge === "right" || edge === "left"
-			? "transform.scaleX"
-			: "transform.scaleY";
-
-	const shouldClearScaleAnimation = hasKeyframesForPath({
-		animations,
-		propertyPath,
-	});
-
-	return {
-		shouldClearScaleAnimation,
-		animationsWithoutScale: shouldClearScaleAnimation
-			? setChannel({
-					animations,
-					propertyPath,
-					channel: undefined,
-				})
-			: animations,
-	};
-}
-
 export class TransformHandleController {
 	private readonly depsRef: TransformHandleDepsRef;
 	private readonly subscribers = new Set<() => void>();
@@ -362,18 +304,17 @@ export class TransformHandleController {
 
 		event.stopPropagation();
 
-		const { shouldClearScaleAnimation, animationsWithoutScale } =
-			buildCornerScaleAnimationReset({
-				animations: context.element.animations,
-			});
-
 		this.session = {
 			kind: "corner-scale",
 			corner,
 			trackId: context.trackId,
 			elementId: context.elementId,
 			initialTransform: context.resolvedTransform,
+			baseTransformAtZero: context.baseTransformAtZero,
 			initialParams: context.element.params,
+			initialAnimations: context.element.animations,
+			localTime: context.localTime,
+			isWithinRange: context.isWithinRange,
 			initialDistance: getCornerDistance({
 				bounds: context.bounds,
 				corner,
@@ -382,8 +323,6 @@ export class TransformHandleController {
 			initialBoundsCy: context.bounds.cy,
 			baseWidth: context.bounds.width / context.resolvedTransform.scaleX,
 			baseHeight: context.bounds.height / context.resolvedTransform.scaleY,
-			shouldClearScaleAnimation,
-			animationsWithoutScale,
 			pointerId: event.pointerId,
 			captureTarget: this.capturePointer({
 				target: event.currentTarget as HTMLElement,
@@ -415,7 +354,11 @@ export class TransformHandleController {
 			trackId: context.trackId,
 			elementId: context.elementId,
 			initialTransform: context.resolvedTransform,
+			baseTransformAtZero: context.baseTransformAtZero,
 			initialParams: context.element.params,
+			initialAnimations: context.element.animations,
+			localTime: context.localTime,
+			isWithinRange: context.isWithinRange,
 			initialAngle,
 			initialBoundsCx: context.bounds.cx,
 			initialBoundsCy: context.bounds.cy,
@@ -441,26 +384,22 @@ export class TransformHandleController {
 
 		event.stopPropagation();
 
-		const { shouldClearScaleAnimation, animationsWithoutScale } =
-			buildEdgeScaleAnimationReset({
-				animations: context.element.animations,
-				edge,
-			});
-
 		this.session = {
 			kind: "edge-scale",
 			edge,
 			trackId: context.trackId,
 			elementId: context.elementId,
 			initialTransform: context.resolvedTransform,
+			baseTransformAtZero: context.baseTransformAtZero,
 			initialParams: context.element.params,
+			initialAnimations: context.element.animations,
+			localTime: context.localTime,
+			isWithinRange: context.isWithinRange,
 			initialBoundsCx: context.bounds.cx,
 			initialBoundsCy: context.bounds.cy,
 			baseWidth: context.bounds.width / context.resolvedTransform.scaleX,
 			baseHeight: context.bounds.height / context.resolvedTransform.scaleY,
 			rotationRad: (context.bounds.rotation * Math.PI) / 180,
-			shouldClearScaleAnimation,
-			animationsWithoutScale,
 			pointerId: event.pointerId,
 			captureTarget: this.capturePointer({
 				target: event.currentTarget as HTMLElement,
@@ -556,10 +495,19 @@ export class TransformHandleController {
 		if (!selectedWithBounds) return null;
 		if (!isVisualElement(selectedWithBounds.element)) return null;
 
+		const currentTime = this.deps.scene.getCurrentTime();
 		const localTime = getElementLocalTime({
-			timelineTime: this.deps.scene.getCurrentTime(),
+			timelineTime: currentTime,
 			elementStartTime: selectedWithBounds.element.startTime,
 			elementDuration: selectedWithBounds.element.duration,
+		});
+		const isWithinRange =
+			currentTime >= selectedWithBounds.element.startTime &&
+			currentTime <=
+				selectedWithBounds.element.startTime +
+					selectedWithBounds.element.duration;
+		const baseTransform = buildTransformFromParams({
+			params: selectedWithBounds.element.params,
 		});
 
 		return {
@@ -568,12 +516,17 @@ export class TransformHandleController {
 			element: selectedWithBounds.element,
 			bounds: selectedWithBounds.bounds,
 			resolvedTransform: resolveTransformAtTime({
-				baseTransform: buildTransformFromParams({
-					params: selectedWithBounds.element.params,
-				}),
+				baseTransform,
 				animations: selectedWithBounds.element.animations,
 				localTime,
 			}),
+			baseTransformAtZero: resolveTransformAtTime({
+				baseTransform,
+				animations: selectedWithBounds.element.animations,
+				localTime: 0,
+			}),
+			localTime,
+			isWithinRange,
 		};
 	}
 
@@ -612,26 +565,32 @@ export class TransformHandleController {
 
 		this.deps.preview.onSnapLinesChange?.(activeLines);
 
+		const nextTransform: Transform = {
+			...session.initialTransform,
+			scaleX: clampScaleNonZero(
+				session.initialTransform.scaleX * snappedScale,
+			),
+			scaleY: clampScaleNonZero(
+				session.initialTransform.scaleY * snappedScale,
+			),
+		};
+		const { params, animations } = applyInteractiveTransformUpdate({
+			initialParams: session.initialParams,
+			initialAnimations: session.initialAnimations,
+			baseTransformAtZero: session.baseTransformAtZero,
+			localTime: session.localTime,
+			isWithinRange: session.isWithinRange,
+			nextTransform,
+			changedPaths: ["transform.scaleX", "transform.scaleY"],
+		});
+
 		this.deps.timeline.previewElements([
 			{
 				trackId: session.trackId,
 				elementId: session.elementId,
 				updates: {
-					params: buildParamsWithTransform({
-						params: session.initialParams,
-						transform: {
-							...session.initialTransform,
-							scaleX: clampScaleNonZero(
-								session.initialTransform.scaleX * snappedScale,
-							),
-							scaleY: clampScaleNonZero(
-								session.initialTransform.scaleY * snappedScale,
-							),
-						},
-					}),
-					...(session.shouldClearScaleAnimation && {
-						animations: session.animationsWithoutScale,
-					}),
+					params,
+					animations,
 				},
 			},
 		]);
@@ -706,28 +665,37 @@ export class TransformHandleController {
 			session.edge === "right" || session.edge === "left" ? xSnap : ySnap;
 		this.deps.preview.onSnapLinesChange?.(relevantSnap.activeLines);
 
+		const isHorizontalEdge =
+			session.edge === "right" || session.edge === "left";
+		const nextTransform: Transform = {
+			...session.initialTransform,
+			scaleX: isHorizontalEdge
+				? xSnap.snappedScale
+				: session.initialTransform.scaleX,
+			scaleY:
+				session.edge === "bottom"
+					? ySnap.snappedScale
+					: session.initialTransform.scaleY,
+		};
+		const { params, animations } = applyInteractiveTransformUpdate({
+			initialParams: session.initialParams,
+			initialAnimations: session.initialAnimations,
+			baseTransformAtZero: session.baseTransformAtZero,
+			localTime: session.localTime,
+			isWithinRange: session.isWithinRange,
+			nextTransform,
+			changedPaths: isHorizontalEdge
+				? ["transform.scaleX"]
+				: ["transform.scaleY"],
+		});
+
 		this.deps.timeline.previewElements([
 			{
 				trackId: session.trackId,
 				elementId: session.elementId,
 				updates: {
-					params: buildParamsWithTransform({
-						params: session.initialParams,
-						transform: {
-							...session.initialTransform,
-							scaleX:
-								session.edge === "right" || session.edge === "left"
-									? xSnap.snappedScale
-									: session.initialTransform.scaleX,
-							scaleY:
-								session.edge === "bottom"
-									? ySnap.snappedScale
-									: session.initialTransform.scaleY,
-						},
-					}),
-					...(session.shouldClearScaleAnimation && {
-						animations: session.animationsWithoutScale,
-					}),
+					params,
+					animations,
 				},
 			},
 		]);
@@ -752,37 +720,29 @@ export class TransformHandleController {
 			? { snappedRotation: newRotate }
 			: snapRotation({ proposedRotation: newRotate });
 
+		const nextTransform: Transform = {
+			...session.initialTransform,
+			rotate: snappedRotation,
+		};
+		const { params, animations } = applyInteractiveTransformUpdate({
+			initialParams: session.initialParams,
+			initialAnimations: session.initialAnimations,
+			baseTransformAtZero: session.baseTransformAtZero,
+			localTime: session.localTime,
+			isWithinRange: session.isWithinRange,
+			nextTransform,
+			changedPaths: ["transform.rotate"],
+		});
+
 		this.deps.timeline.previewElements([
 			{
 				trackId: session.trackId,
 				elementId: session.elementId,
 				updates: {
-					params: buildParamsWithTransform({
-						params: session.initialParams,
-						transform: {
-							...session.initialTransform,
-							rotate: snappedRotation,
-						},
-					}),
+					params,
+					animations,
 				},
 			},
 		]);
 	}
-}
-
-function buildParamsWithTransform({
-	params,
-	transform,
-}: {
-	params: ParamValues;
-	transform: Transform;
-}): ParamValues {
-	return {
-		...params,
-		"transform.positionX": transform.position.x,
-		"transform.positionY": transform.position.y,
-		"transform.scaleX": transform.scaleX,
-		"transform.scaleY": transform.scaleY,
-		"transform.rotate": transform.rotate,
-	};
 }

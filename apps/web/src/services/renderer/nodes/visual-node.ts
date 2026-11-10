@@ -3,6 +3,7 @@ import type { Effect, EffectPass } from "@/effects/types";
 import type { Mask } from "@/masks/types";
 import type { BlendMode, Transform } from "@/rendering";
 import type { RetimeConfig, VisualElement } from "@/timeline";
+import type { TransitionVisualFx } from "@/animation/clip-animations";
 
 export interface VisualNodeParams {
 	duration: number;
@@ -16,6 +17,8 @@ export interface VisualNodeParams {
 	blendMode?: BlendMode;
 	effects?: Effect[];
 	masks?: Mask[];
+	clipParams?: Record<string, unknown>;
+	fitMode?: "contain" | "cover";
 }
 
 export interface ResolvedVisualNodeState {
@@ -23,6 +26,8 @@ export interface ResolvedVisualNodeState {
 	transform: Transform;
 	opacity: number;
 	effectPasses: EffectPass[][];
+	transitionFx?: TransitionVisualFx | null;
+	fitMode?: "contain" | "cover";
 }
 
 export interface ResolvedVisualSourceNodeState extends ResolvedVisualNodeState {

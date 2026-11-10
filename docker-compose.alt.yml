@@ -1,0 +1,52 @@
+# docker-compose alternativo para OpenCut: puertos no colisionan con la
+# infraestructura del vault NERV (que usa 5432 / 6379 / 8079).
+services:
+  db:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: opencut
+      POSTGRES_PASSWORD: opencut
+      POSTGRES_DB: opencut
+    volumes:
+      - opencut_postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U opencut"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 10s
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  serverless-redis-http:
+    image: hiett/serverless-redis-http:latest
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    environment:
+      SRH_MODE: env
+      SRH_TOKEN: example_token
+      SRH_CONNECTION_STRING: "redis://redis:6379"
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://127.0.0.1:80 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+volumes:
+  opencut_postgres_data:

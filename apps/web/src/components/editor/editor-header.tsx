@@ -15,6 +15,7 @@ import { DeleteProjectDialog } from "@/project/components/delete-project-dialog"
 import { useRouter } from "next/navigation";
 import { FaDiscord } from "react-icons/fa6";
 import { ExportButton } from "./export-button";
+import { useAssetsPanelStore } from "./panels/assets/assets-panel-store";
 import { FeedbackPopover } from "@/feedback/components/feedback-popover";
 import { ThemeToggle } from "../theme-toggle";
 import { DEFAULT_LOGO_URL } from "@/site/brand";
@@ -28,6 +29,7 @@ import Image from "next/image";
 import { cn } from "@/utils/ui";
 
 export function EditorHeader() {
+	const { activeTab, setActiveTab } = useAssetsPanelStore();
 	return (
 		<header className="bg-background flex h-[3.4rem] items-center justify-between px-3 pt-0.5">
 			<div className="flex items-center gap-1">
@@ -35,6 +37,7 @@ export function EditorHeader() {
 				<EditableProjectName />
 			</div>
 			<nav className="flex items-center gap-2">
+				<Button variant={activeTab === "ai" ? "secondary" : "outline"} size="sm" onClick={() => setActiveTab("ai")} data-opencut-header-ai="true" className="h-8 gap-1.5 border-cyan-500/35 px-2.5 text-xs font-medium text-cyan-300 hover:bg-cyan-500/10">✨ AI Studio</Button>
 				<FeedbackPopover />
 				<ExportButton />
 				<ThemeToggle />

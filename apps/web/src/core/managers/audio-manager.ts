@@ -111,7 +111,6 @@ export class AudioManager {
 	private handleTimelineChange = (): void => {
 		this.disposeSinks();
 		this.preparedClipBuffers.clear();
-		this.decodedBuffers.clear();
 
 		if (!this.editor.playback.getIsPlaying()) return;
 
@@ -392,12 +391,45 @@ export class AudioManager {
 		let actualClipOffset = clipOffset;
 
 		if (startTimestamp >= audioContext.currentTime) {
-			node.start(startTimestamp, clipOffset);
+			actualStartTimestamp = startTimestamp;
+			actualClipOffset = clipOffset;
 		} else {
 			const lateOffset = audioContext.currentTime - startTimestamp;
 			actualStartTimestamp = audioContext.currentTime;
 			actualClipOffset = clipOffset + lateOffset;
-			node.start(actualStartTimestamp, actualClipOffset);
+		}
+
+		const remainingClipDuration = Math.max(
+			0,
+			clip.duration - actualClipOffset,
+		);
+		if (remainingClipDuration <= 0.005) {
+			return;
+		}
+
+		if (this.needsOfflineRetimedBuffer({ clip })) {
+			if (actualClipOffset < buffer.duration) {
+				node.start(
+					actualStartTimestamp,
+					actualClipOffset,
+					Math.min(remainingClipDuration, buffer.duration - actualClipOffset),
+				);
+			}
+		} else {
+			const rate = clampRetimeRate({ rate: clip.retime?.rate ?? 1 });
+			node.playbackRate.value = rate;
+			const sourceOffset = Math.max(
+				0,
+				(clip.trimStart || 0) + actualClipOffset * rate,
+			);
+			const sourceDuration = Math.max(0.005, remainingClipDuration * rate);
+			if (sourceOffset < buffer.duration) {
+				node.start(
+					actualStartTimestamp,
+					sourceOffset,
+					Math.min(sourceDuration, buffer.duration - sourceOffset),
+				);
+			}
 		}
 
 		this.scheduleClipGainAutomation({
@@ -455,23 +487,30 @@ export class AudioManager {
 	}
 
 	private shouldUsePreparedClipBuffer({
-		clip,
+		clip: _clip,
 	}: {
 		clip: AudioClipSource;
 	}): boolean {
-		return (
-			this.hasCurveRetime({ clip }) ||
-			hasAnimatedVolume({ element: clip.timelineElement }) ||
-			shouldMaintainPitch({
-				rate: clip.retime?.rate ?? 1,
-				maintainPitch: clip.retime?.maintainPitch,
-			})
-		);
+		return true;
 	}
 
 	private hasCurveRetime({ clip }: { clip: AudioClipSource }): boolean {
 		const mode = (clip.retime as { mode?: unknown } | undefined)?.mode;
 		return mode === "curve";
+	}
+
+	private needsOfflineRetimedBuffer({
+		clip,
+	}: {
+		clip: AudioClipSource;
+	}): boolean {
+		if (this.hasCurveRetime({ clip })) return true;
+		const rate = clampRetimeRate({ rate: clip.retime?.rate ?? 1 });
+		return (
+			clip.retime?.maintainPitch === true &&
+			shouldMaintainPitch({ rate, maintainPitch: true }) &&
+			Math.abs(rate - 1) > 1e-4
+		);
 	}
 
 	private scheduleClipGainAutomation({
@@ -555,6 +594,10 @@ export class AudioManager {
 				return null;
 			}
 
+			if (!this.needsOfflineRetimedBuffer({ clip })) {
+				return decodedBuffer;
+			}
+
 			return await renderRetimedBuffer({
 				audioContext,
 				sourceBuffer: decodedBuffer,
@@ -592,6 +635,18 @@ export class AudioManager {
 		const audioContext = this.ensureAudioContext();
 		if (!audioContext) {
 			return null;
+		}
+
+		try {
+			const arrayBuffer = await clip.file.arrayBuffer();
+			const nativeDecoded = await audioContext.decodeAudioData(
+				arrayBuffer.slice(0),
+			);
+			if (nativeDecoded && nativeDecoded.length > 0) {
+				return nativeDecoded;
+			}
+		} catch {
+			// Fall back to mediabunny if native decodeAudioData fails or track has no audio
 		}
 
 		const input = new Input({

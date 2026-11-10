@@ -20,6 +20,10 @@ import {
 import type { TCanvasSize } from "@/project/types";
 import type { ParamValues } from "@/params";
 import { buildTransformFromParams, type Transform } from "@/rendering";
+import { resolveTransformAtTime } from "@/rendering/animation-values";
+import { getElementLocalTime } from "@/animation";
+import type { ElementAnimations } from "@/animation/types";
+import { applyInteractiveTransformUpdate } from "@/animation/transform-keyframes";
 import { isVisualElement } from "@/timeline/element-utils";
 import type {
 	ElementRef,
@@ -52,7 +56,11 @@ interface DragElementSnapshot {
 	readonly trackId: string;
 	readonly elementId: string;
 	readonly initialTransform: Transform;
+	readonly baseTransformAtZero: Transform;
 	readonly initialParams: ParamValues;
+	readonly initialAnimations: ElementAnimations | undefined;
+	readonly localTime: number;
+	readonly isWithinRange: boolean;
 }
 
 interface DraggingGesture extends CapturedPointerState {
@@ -206,8 +214,10 @@ function movedPastDragThreshold({
 
 function toDragElementSnapshots({
 	elementsWithTracks,
+	currentTime,
 }: {
 	elementsWithTracks: Array<{ track: TimelineTrack; element: TimelineElement }>;
+	currentTime: number;
 }): DragElementSnapshot[] {
 	const isVisualTrackedElement = (value: {
 		track: TimelineTrack;
@@ -217,12 +227,37 @@ function toDragElementSnapshots({
 
 	return elementsWithTracks
 		.filter(isVisualTrackedElement)
-		.map(({ track, element }) => ({
-			trackId: track.id,
-			elementId: element.id,
-			initialTransform: buildTransformFromParams({ params: element.params }),
-			initialParams: element.params,
-		}));
+		.map(({ track, element }) => {
+			const baseTransform = buildTransformFromParams({ params: element.params });
+			const localTime = getElementLocalTime({
+				timelineTime: currentTime,
+				elementStartTime: element.startTime,
+				elementDuration: element.duration,
+			});
+			const isWithinRange =
+				currentTime >= element.startTime &&
+				currentTime <= element.startTime + element.duration;
+			const initialTransform = resolveTransformAtTime({
+				baseTransform,
+				animations: element.animations,
+				localTime,
+			});
+			const baseTransformAtZero = resolveTransformAtTime({
+				baseTransform,
+				animations: element.animations,
+				localTime: 0,
+			});
+			return {
+				trackId: track.id,
+				elementId: element.id,
+				initialTransform,
+				baseTransformAtZero,
+				initialParams: element.params,
+				initialAnimations: element.animations,
+				localTime,
+				isWithinRange,
+			};
+		});
 }
 
 export class PreviewInteractionController {
@@ -492,6 +527,7 @@ export class PreviewInteractionController {
 			elementsWithTracks: this.deps.timeline.getElementsWithTracks({
 				elements: dragSelection,
 			}),
+			currentTime: this.deps.scene.getCurrentTime(),
 		});
 
 		if (draggableElements.length === 0) {
@@ -568,17 +604,43 @@ export class PreviewInteractionController {
 			snappedPosition.y - firstElement.initialTransform.position.y;
 
 		this.deps.timeline.previewElements(
-			drag.elements.map(({ trackId, elementId, initialTransform, initialParams }) => ({
-				trackId,
-				elementId,
-				updates: {
-					params: {
-						...initialParams,
-						"transform.positionX": initialTransform.position.x + deltaSnappedX,
-						"transform.positionY": initialTransform.position.y + deltaSnappedY,
-					},
+			drag.elements.map(
+				({
+					trackId,
+					elementId,
+					initialTransform,
+					baseTransformAtZero,
+					initialParams,
+					initialAnimations,
+					localTime,
+					isWithinRange,
+				}) => {
+					const nextTransform: Transform = {
+						...initialTransform,
+						position: {
+							x: initialTransform.position.x + deltaSnappedX,
+							y: initialTransform.position.y + deltaSnappedY,
+						},
+					};
+					const { params, animations } = applyInteractiveTransformUpdate({
+						initialParams,
+						initialAnimations,
+						baseTransformAtZero,
+						localTime,
+						isWithinRange,
+						nextTransform,
+						changedPaths: ["transform.positionX", "transform.positionY"],
+					});
+					return {
+						trackId,
+						elementId,
+						updates: {
+							params,
+							animations,
+						},
+					};
 				},
-			})),
+			),
 		);
 	}
 }

@@ -1,5 +1,6 @@
 import type { BlendMode } from "@/rendering";
 import type { EffectPass } from "@/effects/types";
+import type { TransitionVisualFx } from "@/animation/clip-animations";
 
 export type FrameDescriptor = {
 	width: number;
@@ -19,6 +20,7 @@ export type FrameItemDescriptor =
 			blendMode: BlendMode;
 			effectPassGroups: EffectPass[][];
 			mask: LayerMaskDescriptor | null;
+			transitionFx?: TransitionVisualFx | null;
 	  }
 	| {
 			type: "sceneEffect";

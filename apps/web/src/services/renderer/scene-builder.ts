@@ -18,7 +18,7 @@ import {
 	readOpacityFromParams,
 } from "@/rendering";
 
-const PREVIEW_MAX_IMAGE_SIZE = 2048;
+const PREVIEW_MAX_IMAGE_SIZE = 960;
 
 function getVisibleSortedElements({ track }: { track: TimelineTrack }) {
 	return track.elements
@@ -34,11 +34,13 @@ function buildTrackNodes({
 	tracks,
 	mediaMap,
 	canvasSize,
+	canvasFitMode = "contain",
 	isPreview,
 }: {
 	tracks: TimelineTrack[];
 	mediaMap: Map<string, MediaAsset>;
 	canvasSize: TCanvasSize;
+	canvasFitMode?: "contain" | "cover";
 	isPreview?: boolean;
 }): AnyBaseNode[] {
 	const nodes: AnyBaseNode[] = [];
@@ -46,7 +48,26 @@ function buildTrackNodes({
 	for (const track of tracks) {
 		const elements = getVisibleSortedElements({ track });
 
-		for (const element of elements) {
+		for (let i = 0; i < elements.length; i++) {
+			const element = elements[i]!;
+			const nextElement = i + 1 < elements.length ? elements[i + 1] : undefined;
+
+			// Close sub-frame / micro rounding gaps (<= 100ms = 12,000 ticks) between consecutive visual clips
+			// so the underlying track or black background never flashes for 1-2 frames at a clip junction
+			let effectiveDuration = element.duration;
+			if (
+				nextElement &&
+				(element.type === "video" || element.type === "image") &&
+				(nextElement.type === "video" || nextElement.type === "image")
+			) {
+				const gapTicks =
+					nextElement.startTime - (element.startTime + element.duration);
+				if (gapTicks > 0 && gapTicks <= 12_000) {
+					effectiveDuration = (nextElement.startTime -
+						element.startTime) as typeof element.duration;
+				}
+			}
+
 			if (element.type === "effect") {
 				nodes.push(
 					new EffectLayerNode({
@@ -65,13 +86,17 @@ function buildTrackNodes({
 					continue;
 				}
 
+				const clipFitMode =
+					(element.params?.fitMode as "contain" | "cover" | undefined) ??
+					canvasFitMode;
+
 				if (element.type === "video" && mediaAsset.type === "video") {
 					nodes.push(
 						new VideoNode({
 							mediaId: mediaAsset.id,
 							url: mediaAsset.url,
 							file: mediaAsset.file,
-							duration: element.duration,
+							duration: effectiveDuration,
 							timeOffset: element.startTime,
 							trimStart: element.trimStart,
 							trimEnd: element.trimEnd,
@@ -82,6 +107,8 @@ function buildTrackNodes({
 							blendMode: readBlendModeFromParams({ params: element.params }),
 							effects: element.effects ?? [],
 							masks: element.masks ?? [],
+							clipParams: element.params,
+							fitMode: clipFitMode,
 						}),
 					);
 				}
@@ -89,7 +116,7 @@ function buildTrackNodes({
 					nodes.push(
 						new ImageNode({
 							url: mediaAsset.url,
-							duration: element.duration,
+							duration: effectiveDuration,
 							timeOffset: element.startTime,
 							trimStart: element.trimStart,
 							trimEnd: element.trimEnd,
@@ -99,6 +126,8 @@ function buildTrackNodes({
 							blendMode: readBlendModeFromParams({ params: element.params }),
 							effects: element.effects ?? [],
 							masks: element.masks ?? [],
+							clipParams: element.params,
+							fitMode: clipFitMode,
 							...(isPreview && {
 								maxSourceSize: PREVIEW_MAX_IMAGE_SIZE,
 							}),
@@ -137,6 +166,7 @@ function buildTrackNodes({
 						opacity: readOpacityFromParams({ params: element.params }),
 						blendMode: readBlendModeFromParams({ params: element.params }),
 						effects: element.effects ?? [],
+						clipParams: element.params,
 					}),
 				);
 			}
@@ -156,6 +186,7 @@ function buildTrackNodes({
 						blendMode: readBlendModeFromParams({ params: element.params }),
 						effects: element.effects ?? [],
 						masks: element.masks ?? [],
+						clipParams: element.params,
 					}),
 				);
 			}
@@ -181,7 +212,9 @@ function buildBlurBackgroundNodes({
 	const nodes: AnyBaseNode[] = [];
 	const elements = getVisibleSortedElements({ track });
 
-	for (const element of elements) {
+	for (let i = 0; i < elements.length; i++) {
+		const element = elements[i]!;
+		const nextElement = i + 1 < elements.length ? elements[i + 1] : undefined;
 		if (element.type !== "video" && element.type !== "image") {
 			continue;
 		}
@@ -195,13 +228,26 @@ function buildBlurBackgroundNodes({
 			continue;
 		}
 
+		let effectiveDuration = element.duration;
+		if (
+			nextElement &&
+			(nextElement.type === "video" || nextElement.type === "image")
+		) {
+			const gapTicks =
+				nextElement.startTime - (element.startTime + element.duration);
+			if (gapTicks > 0 && gapTicks <= 12_000) {
+				effectiveDuration = (nextElement.startTime -
+					element.startTime) as typeof element.duration;
+			}
+		}
+
 		nodes.push(
 			new BlurBackgroundNode({
 				mediaId: mediaAsset.id,
 				url: mediaAsset.url,
 				file: mediaAsset.file,
 				mediaType: mediaAsset.type,
-				duration: element.duration,
+				duration: effectiveDuration,
 				timeOffset: element.startTime,
 				trimStart: element.trimStart,
 				trimEnd: element.trimEnd,
@@ -220,6 +266,7 @@ export type BuildSceneParams = {
 	mediaAssets: MediaAsset[];
 	duration: number;
 	background: TBackground;
+	canvasFitMode?: "contain" | "cover";
 	isPreview?: boolean;
 };
 
@@ -229,6 +276,7 @@ export function buildScene({
 	mediaAssets,
 	duration,
 	background,
+	canvasFitMode = "contain",
 	isPreview,
 }: BuildSceneParams) {
 	const rootNode = new RootNode({ duration });
@@ -245,6 +293,7 @@ export function buildScene({
 		tracks: orderedTracksBottomToTop,
 		mediaMap,
 		canvasSize,
+		canvasFitMode,
 		isPreview,
 	});
 

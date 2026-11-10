@@ -219,12 +219,14 @@ export class TimelineManager {
 	}
 
 	getTrackById({ trackId }: { trackId: string }): TimelineTrack | null {
-		const activeScene = this.editor.scenes.getActiveSceneOrNull();
-		if (!activeScene) {
+		const tracks =
+			this.previewTracks ??
+			this.editor.scenes.getActiveSceneOrNull()?.tracks;
+		if (!tracks) {
 			return null;
 		}
 
-		return findTrackInSceneTracks({ tracks: activeScene.tracks, trackId });
+		return findTrackInSceneTracks({ tracks, trackId });
 	}
 
 	getElementsWithTracks({
@@ -723,9 +725,21 @@ export class TimelineManager {
 			});
 			if (changed) {
 				changedOverlayCount += 1;
+				const mergedParams =
+					"params" in elementUpdates && elementUpdates.params
+						? {
+								...(existingOverlay &&
+								"params" in existingOverlay &&
+								existingOverlay.params
+									? existingOverlay.params
+									: undefined),
+								...elementUpdates.params,
+							}
+						: undefined;
 				const mergedOverlay = {
 					...existingOverlay,
 					...elementUpdates,
+					...(mergedParams ? { params: mergedParams } : {}),
 				} as Partial<TimelineElement>;
 				this.previewOverlay.set(elementId, mergedOverlay);
 			}
@@ -781,9 +795,19 @@ export class TimelineManager {
 
 			const nextElements = track.elements.map((element) => {
 				const overlay = this.previewOverlay.get(element.id);
-				return overlay
-					? ({ ...element, ...overlay } as TimelineElement)
-					: element;
+				if (!overlay) return element;
+				const mergedParams =
+					"params" in element &&
+					element.params &&
+					"params" in overlay &&
+					overlay.params
+						? { ...element.params, ...overlay.params }
+						: undefined;
+				return {
+					...element,
+					...overlay,
+					...(mergedParams ? { params: mergedParams } : {}),
+				} as TimelineElement;
 			});
 
 			return { ...track, elements: nextElements } as TTrack;

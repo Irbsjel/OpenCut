@@ -18,6 +18,8 @@ export interface ExportOptions {
 	quality: ExportQuality;
 	fps?: FrameRate;
 	includeAudio?: boolean;
+	canvasSize?: { width: number; height: number };
+	fitMode?: "contain" | "cover";
 }
 
 export interface ExportResult {
@@ -31,6 +33,9 @@ export interface ExportState {
 	isExporting: boolean;
 	progress: number;
 	result: ExportResult | null;
+	totalFrames?: number;
+	currentFrame?: number;
+	elapsedMs?: number;
 }
 
 export function getExportMimeType({

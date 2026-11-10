@@ -128,16 +128,27 @@ export class SplitElementsCommand extends Command {
 					b: leftSourceSpan,
 				});
 
+				const rawParams = (
+					element as TimelineElement & { params?: Record<string, unknown> }
+				).params;
+				const leftParams = rawParams
+					? { ...rawParams, animOut: "none" }
+					: undefined;
+				const rightParams = rawParams
+					? { ...rawParams, animIn: "none" }
+					: undefined;
+
 				if (this.retainSide === "left") {
 					splitResult = [
 						{
 							...element,
+							...(leftParams ? { params: leftParams } : {}),
 							duration: leftVisibleDuration,
 							trimEnd: leftTrimEnd,
 							name: `${element.name} (left)`,
 							animations: leftAnimations,
 							...(retimeRef !== undefined ? { retime: retimeRef } : {}),
-						},
+						} as TimelineElement,
 					];
 				} else if (this.retainSide === "right") {
 					const newId = generateUUID();
@@ -148,6 +159,7 @@ export class SplitElementsCommand extends Command {
 					splitResult = [
 						{
 							...element,
+							...(rightParams ? { params: rightParams } : {}),
 							id: newId,
 							startTime: this.splitTime,
 							duration: rightVisibleDuration,
@@ -155,7 +167,7 @@ export class SplitElementsCommand extends Command {
 							name: `${element.name} (right)`,
 							animations: rightAnimations,
 							...(retimeRef !== undefined ? { retime: retimeRef } : {}),
-						},
+						} as TimelineElement,
 					];
 				} else {
 					const secondElementId = generateUUID();
@@ -166,14 +178,16 @@ export class SplitElementsCommand extends Command {
 					splitResult = [
 						{
 							...element,
+							...(leftParams ? { params: leftParams } : {}),
 							duration: leftVisibleDuration,
 							trimEnd: leftTrimEnd,
 							name: `${element.name} (left)`,
 							animations: leftAnimations,
 							...(retimeRef !== undefined ? { retime: retimeRef } : {}),
-						},
+						} as TimelineElement,
 						{
 							...element,
+							...(rightParams ? { params: rightParams } : {}),
 							id: secondElementId,
 							startTime: this.splitTime,
 							duration: rightVisibleDuration,
@@ -181,7 +195,7 @@ export class SplitElementsCommand extends Command {
 							name: `${element.name} (right)`,
 							animations: rightAnimations,
 							...(retimeRef !== undefined ? { retime: retimeRef } : {}),
-						},
+						} as TimelineElement,
 					];
 				}
 

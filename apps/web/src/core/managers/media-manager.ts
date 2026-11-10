@@ -7,10 +7,20 @@ import { videoCache } from "@/services/video-cache/service";
 import { waveformCache } from "@/services/waveform-cache/service";
 import { BatchCommand, RemoveMediaAssetCommand } from "@/commands";
 
+const FRAME_CACHE_MAX_SIZE = 8;
+
+interface CachedFrame {
+	frame: ImageBitmap;
+	assetId: string;
+	timeMs: number;
+	lastAccessed: number;
+}
+
 export class MediaManager {
 	private assets: MediaAsset[] = [];
 	private isLoading = false;
 	private listeners = new Set<() => void>();
+	private frameCache: CachedFrame[] = [];
 
 	constructor(private editor: EditorCore) {}
 
@@ -28,6 +38,13 @@ export class MediaManager {
 
 		this.assets = [...this.assets, newAsset];
 		this.notify();
+
+		if (newAsset.type === "video" && newAsset.file) {
+			void videoCache.preloadVideo({
+				mediaId: newAsset.id,
+				file: newAsset.file,
+			});
+		}
 
 		try {
 			await storageService.saveMediaAsset({ projectId, mediaAsset: newAsset });
@@ -94,6 +111,15 @@ export class MediaManager {
 			});
 			this.assets = mediaAssets;
 			this.notify();
+
+			for (const asset of mediaAssets) {
+				if (asset.type === "video" && asset.file) {
+					void videoCache.preloadVideo({
+						mediaId: asset.id,
+						file: asset.file,
+					});
+				}
+			}
 		} catch (error) {
 			console.error("Failed to load media assets:", error);
 		} finally {
@@ -132,6 +158,7 @@ export class MediaManager {
 	clearAllAssets(): void {
 		videoCache.clearAll();
 		waveformCache.clearAll();
+		this.evictAllFrames();
 
 		this.assets.forEach((asset) => {
 			if (asset.url) {
@@ -157,6 +184,67 @@ export class MediaManager {
 
 	isLoadingMedia(): boolean {
 		return this.isLoading;
+	}
+
+	async getFrameAt({
+		assetId,
+		timeMs,
+		decode,
+	}: {
+		assetId: string;
+		timeMs: number;
+		decode: () => Promise<ImageBitmap>;
+	}): Promise<ImageBitmap> {
+		const existing = this.frameCache.find(
+			(c) => c.assetId === assetId && c.timeMs === timeMs,
+		);
+		if (existing) {
+			existing.lastAccessed = Date.now();
+			return existing.frame;
+		}
+
+		const frame = await decode();
+
+		if (this.frameCache.length >= FRAME_CACHE_MAX_SIZE) {
+			this.evictLruFrame();
+		}
+
+		this.frameCache.push({ frame, assetId, timeMs, lastAccessed: Date.now() });
+		return frame;
+	}
+
+	evictFramesForAsset({ assetId }: { assetId: string }): void {
+		const remaining: CachedFrame[] = [];
+		for (const entry of this.frameCache) {
+			if (entry.assetId === assetId) {
+				entry.frame.close();
+			} else {
+				remaining.push(entry);
+			}
+		}
+		this.frameCache = remaining;
+	}
+
+	private evictLruFrame(): void {
+		if (this.frameCache.length === 0) return;
+		let lruIndex = 0;
+		for (let i = 1; i < this.frameCache.length; i++) {
+			if (
+				this.frameCache[i]!.lastAccessed <
+				this.frameCache[lruIndex]!.lastAccessed
+			) {
+				lruIndex = i;
+			}
+		}
+		this.frameCache[lruIndex]!.frame.close();
+		this.frameCache.splice(lruIndex, 1);
+	}
+
+	private evictAllFrames(): void {
+		for (const entry of this.frameCache) {
+			entry.frame.close();
+		}
+		this.frameCache = [];
 	}
 
 	subscribe(listener: () => void): () => void {

@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useRef, useState } from "react";
 import type {
 	ParamDefinition,
 	NumberParamDefinition,
@@ -14,6 +15,7 @@ import { SectionField } from "@/components/section";
 import { NumberField } from "@/components/ui/number-field";
 import { Switch } from "@/components/ui/switch";
 import { ColorPicker } from "@/components/ui/color-picker";
+import { FontPicker } from "@/components/ui/font-picker";
 import {
 	Select,
 	SelectContent,
@@ -138,26 +140,115 @@ function ParamInput({
 
 	if (param.type === "text") {
 		return (
-			<Textarea
-				value={String(value)}
-				onChange={(event) => onPreview(event.currentTarget.value)}
-				onBlur={onCommit}
+			<LiveTextParamField
+				value={String(value ?? "")}
+				onPreview={onPreview}
+				onCommit={onCommit}
+				multiline
 			/>
 		);
 	}
 
 	if (param.type === "font") {
 		return (
-			<input
-				className="border-input bg-accent h-9 w-full rounded-md border px-3 text-sm outline-none"
-				value={String(value)}
-				onChange={(event) => onPreview(event.currentTarget.value)}
-				onBlur={onCommit}
+			<FontPicker
+				defaultValue={String(value || "Montserrat")}
+				onValuePreview={(selectedFont) => onPreview(selectedFont)}
+				onValueChange={(selectedFont) => {
+					onPreview(selectedFont);
+					onCommit();
+				}}
 			/>
 		);
 	}
 
 	return null;
+}
+
+function LiveTextParamField({
+	value,
+	onPreview,
+	onCommit,
+	multiline,
+}: {
+	value: string;
+	onPreview: (value: ParamValue) => void;
+	onCommit: () => void;
+	multiline: boolean;
+}) {
+	const [draft, setDraft] = useState(value);
+	const isFocusedRef = useRef(false);
+	const latestDraftRef = useRef(value);
+	const rafIdRef = useRef<number | null>(null);
+	const onPreviewRef = useRef(onPreview);
+	onPreviewRef.current = onPreview;
+
+	useEffect(() => {
+		if (!isFocusedRef.current && value !== latestDraftRef.current) {
+			latestDraftRef.current = value;
+			setDraft(value);
+		}
+	}, [value]);
+
+	useEffect(() => {
+		return () => {
+			if (rafIdRef.current !== null) {
+				cancelAnimationFrame(rafIdRef.current);
+				rafIdRef.current = null;
+			}
+		};
+	}, []);
+
+	const handleChange = (
+		event: React.ChangeEvent<HTMLTextAreaElement | HTMLInputElement>,
+	) => {
+		const next = event.currentTarget.value;
+		latestDraftRef.current = next;
+		setDraft(next);
+
+		if (rafIdRef.current !== null) {
+			cancelAnimationFrame(rafIdRef.current);
+		}
+		rafIdRef.current = requestAnimationFrame(() => {
+			rafIdRef.current = null;
+			onPreviewRef.current(latestDraftRef.current);
+		});
+	};
+
+	const handleFocus = () => {
+		isFocusedRef.current = true;
+	};
+
+	const handleBlur = () => {
+		isFocusedRef.current = false;
+		if (rafIdRef.current !== null) {
+			cancelAnimationFrame(rafIdRef.current);
+			rafIdRef.current = null;
+		}
+		onPreviewRef.current(latestDraftRef.current);
+		onCommit();
+	};
+
+	if (multiline) {
+		return (
+			<Textarea
+				value={draft}
+				onFocus={handleFocus}
+				onChange={handleChange}
+				onBlur={handleBlur}
+			/>
+		);
+	}
+
+	return (
+		<input
+			className="border-input bg-accent h-9 w-full rounded-md border px-3 text-sm outline-none"
+			value={draft}
+			onFocus={handleFocus}
+			onChange={handleChange}
+			onBlur={handleBlur}
+		/>
+	);
 }
 
 function NumberParamField({
