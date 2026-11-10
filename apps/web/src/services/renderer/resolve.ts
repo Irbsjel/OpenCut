@@ -287,7 +287,9 @@ async function resolveVideoNode({
 	const frame = await videoCache.getFrameAt({
 		mediaId: node.params.mediaId,
 		file: node.params.file,
-		time: mediaTimeToSeconds({ time: roundMediaTime({ time: sourceTimeTicks }) }),
+		time: mediaTimeToSeconds({
+			time: roundMediaTime({ time: sourceTimeTicks }),
+		}),
 	});
 	if (!frame) {
 		return null;
@@ -550,10 +552,7 @@ function resolveTextNode({
 			let activeSpeed = clipAnim.animLoopSpeed;
 			const activeIntensity = clipAnim.animLoopIntensity;
 
-			if (
-				clipAnim.animIn.startsWith("letter-") &&
-				localTimeSec < inDur
-			) {
+			if (clipAnim.animIn.startsWith("letter-") && localTimeSec < inDur) {
 				const mapIn: Record<string, LetterAnimationStyle> = {
 					"letter-pop-cascade": "pop-cascade",
 					"letter-typewriter": "typewriter-pro",
@@ -623,7 +622,10 @@ function resolveTextNode({
 				  }>
 				| undefined;
 			const rawWordTimings = node.params.params.wordTimings;
-			if (node.cachedWordTimingsRaw === rawWordTimings && rawWordTimings != null) {
+			if (
+				node.cachedWordTimingsRaw === rawWordTimings &&
+				rawWordTimings != null
+			) {
 				wordTimings = node.cachedWordTimings;
 			} else {
 				if (Array.isArray(rawWordTimings)) {
@@ -661,6 +663,10 @@ function resolveTextNode({
 				shadowBlur,
 				shadowColor,
 				karaokeMode,
+				maxWordWidth: isSubtitleNode
+					? (context.renderer.width * 0.9) /
+						Math.max(1, Math.abs(transform.scaleX))
+					: undefined,
 				wordTimings,
 			};
 		})(),
@@ -718,7 +724,9 @@ async function resolveBackdropSource({
 		const frame = await videoCache.getFrameAt({
 			mediaId: node.params.mediaId,
 			file: node.params.file,
-			time: mediaTimeToSeconds({ time: roundMediaTime({ time: sourceTimeTicks }) }),
+			time: mediaTimeToSeconds({
+				time: roundMediaTime({ time: sourceTimeTicks }),
+			}),
 		});
 		if (!frame) {
 			return null;

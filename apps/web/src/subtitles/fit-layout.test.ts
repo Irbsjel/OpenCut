@@ -7,7 +7,7 @@ const samples = [
 	"ESPERAS UNAS QUESADILLAS ✨",
 	"SE DESVANECEN DE A POCO,",
 	"Neuropsicofisiológicamente extraordinario",
-	"una frase extensa ".repeat(20),
+	"una frase extensa ".repeat(60),
 	"¿A QUIÉN\nNO 🤔",
 	"ESPERAS\nUNAS\nQUESADILLAS\n✨",
 ];
@@ -35,7 +35,7 @@ describe("subtitle safe layout", () => {
 					paddingX: 30,
 					paddingY: 42,
 				});
-				expect(result.width).toBeLessThanOrEqual(canvasSize.width * 0.8);
+				expect(result.width).toBeLessThanOrEqual(canvasSize.width * 0.9);
 				expect(result.fontSize).toBe(5.8);
 				if (text.length < 200) expect(result.fits).toBe(true);
 				else expect(result.fits).toBe(false);

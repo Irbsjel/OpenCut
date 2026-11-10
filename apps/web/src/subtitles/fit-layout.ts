@@ -9,7 +9,7 @@ export function fitSubtitleLayout({
 	canvasSize,
 	lineHeight = 1.2,
 	letterSpacing = 0,
-	maxWidth = canvasSize.width * 0.8,
+	maxWidth = canvasSize.width * 0.9,
 	strokeWidth = 5,
 	shadowBlur = 10,
 	paddingX = 0,
@@ -30,7 +30,7 @@ export function fitSubtitleLayout({
 	paddingX?: number;
 	paddingY?: number;
 }) {
-	const emphasisScale = 1.2;
+	const emphasisScale = 1;
 	const px = (fontSize * canvasSize.height) / 90;
 	ctx.font = `${fontStyle} ${fontWeight} ${px}px "${fontFamily.replace(/"/g, '\\"')}", sans-serif`;
 	if ("letterSpacing" in ctx) ctx.letterSpacing = `${letterSpacing}px`;

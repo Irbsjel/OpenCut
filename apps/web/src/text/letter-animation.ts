@@ -125,6 +125,7 @@ export interface ResolvedLetterAnimationState {
 	shadowColor?: string;
 	karaokeMode?: "pill" | "highlight";
 	wordTimings?: WordRelativeTiming[];
+	maxWordWidth?: number;
 }
 
 function easeOutBack(x: number): number {
@@ -644,6 +645,22 @@ function drawWordKaraokeLayout({
 			const wordIdx = currentWordCounter++;
 			const isActive = wordIdx === activeWordIdx;
 			const isPast = wordIdx < activeWordIdx;
+			// Limit the emphasis animation instead of reducing the normal font size.
+			const availablePopWidth =
+				animation.maxWordWidth == null
+					? Infinity
+					: animation.maxWordWidth - Math.abs(centerX) * 2 - strokeW * 3;
+			const wordPopScale = Math.max(
+				1,
+				Math.min(
+					popScale,
+					availablePopWidth /
+						Math.max(
+							1,
+							w + (isHighlightMode ? 0 : layout.scaledFontSize * 0.44),
+						),
+				),
+			);
 
 			ctx.save();
 			ctx.translate(centerX, lineY);
@@ -652,7 +669,7 @@ function drawWordKaraokeLayout({
 			setCanvasLetterSpacing({ ctx, letterSpacingPx: layout.letterSpacing });
 
 			if (isActive && !isHighlightMode) {
-				ctx.scale(popScale, popScale);
+				ctx.scale(wordPopScale, wordPopScale);
 				const padX = layout.scaledFontSize * 0.22;
 				const padY = layout.scaledFontSize * 0.14;
 				const pillW = w + padX * 2;
@@ -674,7 +691,7 @@ function drawWordKaraokeLayout({
 				ctx.fillText(tok, 0, 0);
 			} else {
 				if (isActive && isHighlightMode) {
-					ctx.scale(popScale, popScale);
+					ctx.scale(wordPopScale, wordPopScale);
 				}
 				if (strokeW > 0.2) {
 					ctx.save();

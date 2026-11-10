@@ -129,8 +129,8 @@ function resolveTargetWidth({
 	canvasWidth: number;
 	placement: ReturnType<typeof resolveSubtitleStyle>["placement"];
 }): number {
-	const leftRatio = Math.max(0.1, placement.marginLeftRatio ?? 0.1);
-	const rightRatio = Math.max(0.1, placement.marginRightRatio ?? 0.1);
+	const leftRatio = Math.max(0.05, placement.marginLeftRatio ?? 0.05);
+	const rightRatio = Math.max(0.05, placement.marginRightRatio ?? 0.05);
 	return Math.max(1, canvasWidth * (1 - leftRatio - rightRatio));
 }
 
@@ -146,9 +146,9 @@ function resolvePositionX({
 	visualRect: { left: number; width: number };
 }): number {
 	const leftMargin =
-		canvasWidth * Math.max(0.1, placement.marginLeftRatio ?? 0.1);
+		canvasWidth * Math.max(0.05, placement.marginLeftRatio ?? 0.05);
 	const rightMargin =
-		canvasWidth * Math.max(0.1, placement.marginRightRatio ?? 0.1);
+		canvasWidth * Math.max(0.05, placement.marginRightRatio ?? 0.05);
 	const canvasCenterX = canvasWidth / 2;
 
 	if (textAlign === "left") {
