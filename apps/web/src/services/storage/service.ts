@@ -272,10 +272,12 @@ class StorageService {
 		this.pushProjectTimers.set(projectId, timer);
 	}
 
-	async syncWithCloud(): Promise<void> {
+	async syncWithCloud(targetProjectId?: string): Promise<void> {
 		if (typeof window === "undefined") return;
-		// Start OPFS media upload immediately without waiting for project metadata sync
-		void this.runBackgroundMediaUpload();
+		// Schedule OPFS media upload after initial hydration so it never competes with loadProject
+		setTimeout(() => {
+			void this.runBackgroundMediaUpload();
+		}, 8000);
 		if (this.cloudSyncPromise) {
 			return this.cloudSyncPromise;
 		}
@@ -291,7 +293,10 @@ class StorageService {
 					}
 				}
 
-				const getRes = await fetch(this.getCloudApiBase());
+				const query = targetProjectId
+					? `?id=${encodeURIComponent(targetProjectId)}`
+					: "";
+				const getRes = await fetch(`${this.getCloudApiBase()}${query}`);
 				const remoteMap = new Map<string, string>();
 				if (getRes.ok) {
 					const data = (await getRes.json()) as {
@@ -299,8 +304,15 @@ class StorageService {
 							project: SerializedProject;
 							mediaMetadata: MediaAssetData[];
 						}>;
+						project?: SerializedProject;
+						mediaMetadata?: MediaAssetData[];
 					};
-					for (const bundle of data.projects ?? []) {
+					const bundles =
+						data.projects ??
+						(data.project
+							? [{ project: data.project, mediaMetadata: data.mediaMetadata ?? [] }]
+							: []);
+					for (const bundle of bundles) {
 						if (!bundle?.project?.metadata?.id) continue;
 						const pid = bundle.project.metadata.id;
 						const remoteUpdated = bundle.project.metadata.updatedAt || "";
@@ -350,6 +362,7 @@ class StorageService {
 				for (const proj of localProjects) {
 					const pid = proj?.metadata?.id;
 					if (!pid) continue;
+					if (targetProjectId && pid !== targetProjectId) continue;
 					const remoteUpdated = remoteMap.get(pid);
 					const localTime = new Date(proj.metadata.updatedAt || 0).getTime();
 					const remoteTime = remoteUpdated
@@ -498,7 +511,7 @@ class StorageService {
 		id: string;
 	}): Promise<{ project: TProject } | null> {
 		await this.ensureMigrations();
-		await this.syncWithCloud();
+		await this.syncWithCloud(id);
 		const serializedProject = await this.projectsAdapter.get(id);
 
 		if (!serializedProject) return null;
@@ -786,16 +799,17 @@ class StorageService {
 				for await (const [dirName, handle] of (root as unknown as { entries(): AsyncIterable<[string, FileSystemHandle]> }).entries()) {
 					if (handle.kind !== "directory" || !dirName.startsWith("media-files-")) continue;
 					const dirHandle = handle as FileSystemDirectoryHandle;
-					for await (const [fName, fHandle] of (dirHandle as unknown as { entries(): AsyncIterable<[string, FileSystemHandle]> }).entries()) {
-						if (fHandle.kind !== "file") continue;
-						const candidate = await (fHandle as FileSystemFileHandle).getFile();
-						if (candidate.size > 0 && (fName === id || (metadata.size && candidate.size === metadata.size))) {
+					try {
+						const fHandle = await dirHandle.getFileHandle(id);
+						const candidate = await fHandle.getFile();
+						if (candidate.size > 0) {
 							await mediaAssetsAdapter.set({ key: id, value: candidate });
-							file = await mediaAssetsAdapter.get(id);
+							file = candidate;
 							break;
 						}
+					} catch {
+						// not in this project directory
 					}
-					if (file && file.size > 0) break;
 				}
 			} catch {
 				// ignore recovery error
