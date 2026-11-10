@@ -98,14 +98,15 @@ export function TimelineTrackContent({
 	}, [previewTracks, track.elements, track.id]);
 
 	const { visualElements, cutJunctions } = useMemo(() => {
+		// Only render CapCut-style video cut transition badges on video tracks (never on subtitle/text tracks)
+		if (track.type !== "video") {
+			return { visualElements: [] as VisualElement[], cutJunctions: [] as TrackCutJunction[] };
+		}
 		const visuals = liveElements
 			.filter(
 				(el): el is VisualElement =>
-					el.type === "video" ||
-					el.type === "image" ||
-					el.type === "text" ||
-					el.type === "sticker" ||
-					el.type === "graphic",
+					(el.type === "video" || el.type === "image") &&
+					el.params?.isSubtitleOverlay !== true,
 			)
 			.slice()
 			.sort((a, b) => a.startTime - b.startTime);

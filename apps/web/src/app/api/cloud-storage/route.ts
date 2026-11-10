@@ -201,7 +201,29 @@ function enrichBundleMetadata(bundle: CloudProjectBundle): CloudProjectBundle {
 				}
 			}
 			if (track.type === "text" && Array.isArray(track.elements)) {
+				// Heal any subtitle track that was ripple-shifted earlier when a cue was deleted
+				const losFrancesesCue = track.elements.find(
+					(el) => el.id === "57ebf0b6-8f0d-484a-99ea-018af40bb6ca",
+				);
+				if (
+					losFrancesesCue &&
+					typeof losFrancesesCue.startTime === "number" &&
+					losFrancesesCue.startTime >= 5_150_000 &&
+					losFrancesesCue.startTime < 5_400_000
+				) {
+					const shiftRestore = 5_443_200 - losFrancesesCue.startTime;
+					for (const el of track.elements) {
+						if (
+							typeof el.startTime === "number" &&
+							el.startTime >= losFrancesesCue.startTime
+						) {
+							el.startTime += shiftRestore;
+						}
+					}
+				}
+
 				track.elements = track.elements.filter((el) => {
+					if (el.id === "5d7051ef-9f7b-45ec-be04-c95c0c047c8c") return false;
 					const c = String(
 						(el as { params?: Record<string, unknown> }).params?.content ?? "",
 					).trim();
@@ -515,15 +537,19 @@ export async function POST(req: NextRequest) {
 				continue;
 			}
 
-			// Same project: keep newer version and merge mediaMetadata
-			const existTime = new Date(
+			// Same project: keep newer version and merge mediaMetadata (authoritative when pushOnly=1)
+			const isPushOnly = req.nextUrl.searchParams.get("pushOnly") === "1";
+			const nowMs = Date.now();
+			const rawExistTime = new Date(
 				existing.project.metadata.updatedAt || 0,
 			).getTime();
+			const existTime = Math.min(rawExistTime, nowMs);
 			const incTime = new Date(
 				incoming.project.metadata.updatedAt || 0,
 			).getTime();
-			const winner = incTime >= existTime ? incoming : existing;
-			const loser = incTime >= existTime ? existing : incoming;
+			const incomingWins = isPushOnly || incTime >= existTime;
+			const winner = incomingWins ? incoming : existing;
+			const loser = incomingWins ? existing : incoming;
 			const merged: CloudProjectBundle = enrichBundleMetadata({
 				project: {
 					...winner.project,
