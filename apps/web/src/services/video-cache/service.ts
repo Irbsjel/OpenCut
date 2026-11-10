@@ -1636,13 +1636,17 @@ export class VideoCache {
 		try {
 			const mimeType =
 				file.type && file.type.startsWith("video/") ? file.type : "video/mp4";
-			const bufferOrBlob = await this.readFileBuffer(mediaId, file);
-			const blob = new Blob([bufferOrBlob], { type: mimeType });
+			const blob =
+				file.size > 0
+					? file.slice(0, file.size, mimeType)
+					: new Blob([await this.readFileBuffer(mediaId, file)], {
+							type: mimeType,
+						});
 			const objectUrl = URL.createObjectURL(blob);
 
 			const video0 = createHiddenVideoElement(objectUrl);
 			const video1 = createHiddenVideoElement(objectUrl);
-			video1.load();
+			video1.preload = "metadata";
 
 			await new Promise<void>((resolve, reject) => {
 				let settled = false;

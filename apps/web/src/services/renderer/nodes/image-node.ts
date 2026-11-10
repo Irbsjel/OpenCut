@@ -65,6 +65,9 @@ export function loadImageSource({
 	})();
 
 	imageSourceCache.set(cacheKey, promise);
+	promise.catch(() => {
+		imageSourceCache.delete(cacheKey);
+	});
 	return promise;
 }
 

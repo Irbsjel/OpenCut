@@ -2,8 +2,8 @@ import type { FontAtlas } from "@/fonts/types";
 import { SYSTEM_FONTS } from "@/fonts/system-fonts";
 
 const GOOGLE_FONTS_CSS = "https://fonts.googleapis.com/css2";
-const FONT_ATLAS_PATH = "/fonts/font-atlas.json";
-const FONT_CHUNK_PATH_PREFIX = "/fonts/font-chunk-";
+const FONT_ATLAS_PATH = "/videos/fonts/font-atlas.json";
+const FONT_CHUNK_PATH_PREFIX = "/videos/fonts/font-chunk-";
 
 const fullLoaded = new Set<string>();
 

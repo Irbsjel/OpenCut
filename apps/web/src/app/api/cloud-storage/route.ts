@@ -130,14 +130,26 @@ const LEGACY_MEME_MEDIA_UPGRADES: Record<
 	},
 };
 
+const EXCLUDED_LEGACY_MEDIA_IDS = new Set<string>([
+	...Object.keys(LEGACY_MEME_MEDIA_UPGRADES),
+	"6cbc22d0-6de8-4249-9cba-49a56480d141",
+	"402399fa-4384-4dbd-8137-273177e2acce",
+	"d195486f-0ae7-4927-9fd2-781ebce199c0",
+	"fffb0441-805a-4959-948a-1805d2127fb1",
+	"8cbd7c84-0fcd-4f01-9d9a-eb99978bdf9b",
+	"d680d61e-4db4-48af-9456-75635e5aab3d",
+]);
+
 function enrichBundleMetadata(bundle: CloudProjectBundle): CloudProjectBundle {
 	const project = structuredClone(bundle.project) as SerializedProject & {
 		id?: string;
 	};
 	project.id = project.metadata.id;
-	const mediaMetadata = Array.isArray(bundle.mediaMetadata)
-		? structuredClone(bundle.mediaMetadata)
-		: [];
+	const mediaMetadata = (
+		Array.isArray(bundle.mediaMetadata)
+			? structuredClone(bundle.mediaMetadata)
+			: []
+	).filter((m) => m?.id && !EXCLUDED_LEGACY_MEDIA_IDS.has(m.id));
 
 	// Normalize any legacy duplicate main-track memes, template memes, or subtitle typos
 	for (const scene of project.scenes ?? []) {
@@ -150,7 +162,9 @@ function enrichBundleMetadata(bundle: CloudProjectBundle): CloudProjectBundle {
 						!(
 							e.type === "image" &&
 							typeof e.name === "string" &&
-							e.name.includes("Meme")
+							(e.name.toLowerCase().includes("meme") ||
+								e.name.toLowerCase().includes("sticker") ||
+								e.name.toLowerCase().includes("contexto-visual"))
 						),
 				)
 				.sort((a, b) => (a.startTime ?? 0) - (b.startTime ?? 0));
@@ -250,12 +264,6 @@ function enrichBundleMetadata(bundle: CloudProjectBundle): CloudProjectBundle {
 
 	return { project, mediaMetadata };
 }
-
-const EXCLUDED_LEGACY_MEDIA_IDS = new Set<string>([
-	...Object.keys(LEGACY_MEME_MEDIA_UPGRADES),
-	"6cbc22d0-6de8-4249-9cba-49a56480d141",
-	"402399fa-4384-4dbd-8137-273177e2acce",
-]);
 
 function mergeMediaMetadata(
 	a: MediaAssetData[],
