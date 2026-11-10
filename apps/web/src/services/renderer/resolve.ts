@@ -525,12 +525,7 @@ function resolveTextNode({
 				activeStyle = mapLoop[clipAnim.animLoop] ?? "none";
 				phaseTimeSec = Math.max(0, localTimeSec - inDur * 0.5);
 				activeSpeed = clipAnim.animLoopSpeed;
-			} else if (
-				clipAnim.animIn === "none" &&
-				clipAnim.animLoop === "none" &&
-				clipAnim.animOut === "none" &&
-				legacyStyle !== "none"
-			) {
+			} else if (legacyStyle !== "none") {
 				activeStyle = legacyStyle;
 				phaseTimeSec = localTimeSec;
 			}

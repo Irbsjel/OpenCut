@@ -72,6 +72,43 @@ function countTimelineElements(project: SerializedProject): number {
 	return count;
 }
 
+const LEGACY_MEME_MEDIA_UPGRADES: Record<
+	string,
+	{ newId: string; name: string; fileName: string; isSticker?: boolean }
+> = {
+	"58a3b0fb-b081-4cc0-a2ef-dbab145cbe1a": {
+		newId: "58a3b0fb-b081-4cc0-a2ef-dbab145cbe2b",
+		name: "Sticker · ¿QUÉ PASA AQUÍ?",
+		fileName: "sticker-que-pasa-aqui.png",
+		isSticker: true,
+	},
+	"a817504d-b0cf-4920-9eb1-ba9fb343d5c9": {
+		newId: "a817504d-b0cf-4920-9eb1-ba9fb343d5da",
+		name: "Meme IA · Pablo Escobar Pensativo",
+		fileName: "meme-real-sad-escobar.png",
+	},
+	"e94c69e8-1280-44ca-9d5b-8875b8c1f2ca": {
+		newId: "a817504d-b0cf-4920-9eb1-ba9fb343d5da",
+		name: "Meme IA · Pablo Escobar Pensativo",
+		fileName: "meme-real-sad-escobar.png",
+	},
+	"7808d354-61c0-4259-8e5f-75c7010403b8": {
+		newId: "7808d354-61c0-4259-8e5f-75c7010403c9",
+		name: "Meme IA · Mirada Incómoda de Costado (Monkey Puppet)",
+		fileName: "meme-real-monkey-puppet.png",
+	},
+	"f6e0f22d-966c-4de5-88ce-58df01a03dbf": {
+		newId: "7808d354-61c0-4259-8e5f-75c7010403c9",
+		name: "Meme IA · Mirada Incómoda de Costado (Monkey Puppet)",
+		fileName: "meme-real-monkey-puppet.png",
+	},
+	"801f405a-95b0-476d-906d-42ef77b97198": {
+		newId: "801f405a-95b0-476d-906d-42ef77b971a9",
+		name: "Meme IA · Kermit Oscuro (Tu Subconsciente)",
+		fileName: "meme-real-evil-kermit.png",
+	},
+};
+
 function enrichBundleMetadata(bundle: CloudProjectBundle): CloudProjectBundle {
 	const project = structuredClone(bundle.project) as SerializedProject & {
 		id?: string;
@@ -80,6 +117,82 @@ function enrichBundleMetadata(bundle: CloudProjectBundle): CloudProjectBundle {
 	const mediaMetadata = Array.isArray(bundle.mediaMetadata)
 		? structuredClone(bundle.mediaMetadata)
 		: [];
+
+	// Normalize any legacy duplicate main-track memes, template memes, or subtitle typos
+	for (const scene of project.scenes ?? []) {
+		const tracks = scene?.tracks;
+		if (!tracks) continue;
+		if (tracks.main?.elements) {
+			tracks.main.elements = tracks.main.elements
+				.filter(
+					(e) =>
+						!(
+							e.type === "image" &&
+							typeof e.name === "string" &&
+							e.name.includes("Meme")
+						),
+				)
+				.sort((a, b) => (a.startTime ?? 0) - (b.startTime ?? 0));
+		}
+		for (const track of tracks.overlay ?? []) {
+			if (track.type === "video" && Array.isArray(track.elements)) {
+				for (const el of track.elements) {
+					if (el.type !== "image") continue;
+					const mediaId = (el as { mediaId?: string }).mediaId || "";
+					const upg = LEGACY_MEME_MEDIA_UPGRADES[mediaId];
+					const params = ((el as { params?: Record<string, unknown> }).params ??=
+						{});
+					params.isSubtitleOverlay = true;
+					params.animationPreset =
+						(params.animationPreset as string) || "zoom-in-pop";
+					if (upg) {
+						(el as { mediaId: string }).mediaId = upg.newId;
+						el.name = upg.name;
+						if (upg.isSticker) {
+							params.borderColor = "white";
+						}
+						if (!mediaMetadata.some((m) => m.id === upg.newId)) {
+							mediaMetadata.push({
+								id: upg.newId,
+								name: upg.fileName,
+								type: "image",
+								size: 350000,
+								lastModified: Date.now(),
+								width: 640,
+								height: 640,
+							});
+						}
+					}
+				}
+			}
+			if (track.type === "text" && Array.isArray(track.elements)) {
+				track.elements = track.elements.filter((el) => {
+					const c = String(
+						(el as { params?: Record<string, unknown> }).params?.content ?? "",
+					).trim();
+					const stSec = (el.startTime ?? 0) / 120000;
+					if (c === "Hola." && stSec > 95) return false;
+					return true;
+				});
+				for (const el of track.elements) {
+					const params = (el as { params?: Record<string, unknown> }).params;
+					if (!params || typeof params.content !== "string") continue;
+					if (params.content.includes("vivorear")) {
+						params.content = params.content.replace("vivorear", "viborear");
+					}
+					if (params.content.trim().toLowerCase() === "papoy.") {
+						params.content = "Papoi.";
+					}
+					if (params.content.includes("En sinapsis")) {
+						params.content = params.content.replace(
+							"En sinapsis",
+							"En Sinapsis",
+						);
+					}
+				}
+			}
+		}
+	}
 
 	const primaryVideo =
 		mediaMetadata.find((m) => m.type === "video" && !m.ephemeral) ??
@@ -117,13 +230,19 @@ function enrichBundleMetadata(bundle: CloudProjectBundle): CloudProjectBundle {
 	return { project, mediaMetadata };
 }
 
+const EXCLUDED_LEGACY_MEDIA_IDS = new Set<string>([
+	...Object.keys(LEGACY_MEME_MEDIA_UPGRADES),
+	"6cbc22d0-6de8-4249-9cba-49a56480d141",
+	"402399fa-4384-4dbd-8137-273177e2acce",
+]);
+
 function mergeMediaMetadata(
 	a: MediaAssetData[],
 	b: MediaAssetData[],
 ): MediaAssetData[] {
 	const map = new Map<string, MediaAssetData>();
 	for (const item of [...(a ?? []), ...(b ?? [])]) {
-		if (!item?.id) continue;
+		if (!item?.id || EXCLUDED_LEGACY_MEDIA_IDS.has(item.id)) continue;
 		const prev = map.get(item.id);
 		if (!prev) {
 			map.set(item.id, item);
