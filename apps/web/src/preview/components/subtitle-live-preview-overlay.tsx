@@ -27,24 +27,37 @@ export function SubtitleLivePreviewOverlay() {
 
 	const [activeWordIdx, setActiveWordIdx] = useState(2);
 
-	const hasSubtitleAtPlayhead = useMemo(() => {
-		if (!activeScene?.tracks?.overlay) return false;
+	const { hasSubtitleAtPlayhead, hasAnySubtitleInTimeline } = useMemo(() => {
+		if (!activeScene?.tracks?.overlay) {
+			return { hasSubtitleAtPlayhead: false, hasAnySubtitleInTimeline: false };
+		}
+		let anySub = false;
+		let atPlayhead = false;
 		for (const track of activeScene.tracks.overlay) {
 			if (track.type !== "text") continue;
 			for (const el of track.elements) {
 				if (el.type !== "text") continue;
-				if (el.params?.isSubtitle !== true) continue;
+				if (
+					el.params?.isSubtitle !== true &&
+					!(typeof el.name === "string" && el.name.startsWith("Subtítulo"))
+				) {
+					continue;
+				}
+				anySub = true;
 				const startSec = mediaTimeToSeconds({ time: el.startTime });
 				const endSec = startSec + mediaTimeToSeconds({ time: el.duration });
 				if (
 					currentTimeSec >= startSec - 0.05 &&
 					currentTimeSec <= endSec + 0.05
 				) {
-					return true;
+					atPlayhead = true;
 				}
 			}
 		}
-		return false;
+		return {
+			hasSubtitleAtPlayhead: atPlayhead,
+			hasAnySubtitleInTimeline: anySub,
+		};
 	}, [activeScene, currentTimeSec]);
 
 	const words = useMemo(() => {
@@ -64,7 +77,10 @@ export function SubtitleLivePreviewOverlay() {
 		return null;
 	}
 
-	if (hasSubtitleAtPlayhead && previewBackdrop === "video") {
+	if (
+		(hasAnySubtitleInTimeline || hasSubtitleAtPlayhead) &&
+		previewBackdrop === "video"
+	) {
 		return null;
 	}
 

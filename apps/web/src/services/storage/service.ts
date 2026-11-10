@@ -329,8 +329,10 @@ class StorageService {
 							await mediaMetadataAdapter.list().catch(() => []),
 						);
 						for (const m of bundle.mediaMetadata ?? []) {
-							if (!m?.id || existingKeys.has(m.id)) continue;
-							await mediaMetadataAdapter.set({ key: m.id, value: m });
+							if (!m?.id) continue;
+							if (!existingKeys.has(m.id) || remoteTime >= localTime) {
+								await mediaMetadataAdapter.set({ key: m.id, value: m });
+							}
 						}
 					}
 				}
