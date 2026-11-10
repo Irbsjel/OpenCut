@@ -77,34 +77,55 @@ const LEGACY_MEME_MEDIA_UPGRADES: Record<
 	{ newId: string; name: string; fileName: string; isSticker?: boolean }
 > = {
 	"58a3b0fb-b081-4cc0-a2ef-dbab145cbe1a": {
-		newId: "58a3b0fb-b081-4cc0-a2ef-dbab145cbe2b",
-		name: "Sticker · ¿QUÉ PASA AQUÍ?",
-		fileName: "sticker-que-pasa-aqui.png",
+		newId: "58a3b0fb-b081-4cc0-a2ef-dbab145cbe2c",
+		name: "Sticker IA · Chispa Mental",
+		fileName: "sticker-chispa-mental.png",
+		isSticker: true,
+	},
+	"58a3b0fb-b081-4cc0-a2ef-dbab145cbe2b": {
+		newId: "58a3b0fb-b081-4cc0-a2ef-dbab145cbe2c",
+		name: "Sticker IA · Chispa Mental",
+		fileName: "sticker-chispa-mental.png",
 		isSticker: true,
 	},
 	"a817504d-b0cf-4920-9eb1-ba9fb343d5c9": {
-		newId: "a817504d-b0cf-4920-9eb1-ba9fb343d5da",
-		name: "Meme IA · Pablo Escobar Pensativo",
+		newId: "a817504d-b0cf-4920-9eb1-ba9fb343d5db",
+		name: "Meme IA · En la Punta de la Lengua",
+		fileName: "meme-real-sad-escobar.png",
+	},
+	"a817504d-b0cf-4920-9eb1-ba9fb343d5da": {
+		newId: "a817504d-b0cf-4920-9eb1-ba9fb343d5db",
+		name: "Meme IA · En la Punta de la Lengua",
 		fileName: "meme-real-sad-escobar.png",
 	},
 	"e94c69e8-1280-44ca-9d5b-8875b8c1f2ca": {
-		newId: "a817504d-b0cf-4920-9eb1-ba9fb343d5da",
-		name: "Meme IA · Pablo Escobar Pensativo",
+		newId: "a817504d-b0cf-4920-9eb1-ba9fb343d5db",
+		name: "Meme IA · En la Punta de la Lengua",
 		fileName: "meme-real-sad-escobar.png",
 	},
 	"7808d354-61c0-4259-8e5f-75c7010403b8": {
-		newId: "7808d354-61c0-4259-8e5f-75c7010403c9",
-		name: "Meme IA · Mirada Incómoda de Costado (Monkey Puppet)",
+		newId: "7808d354-61c0-4259-8e5f-75c7010403ca",
+		name: "Meme IA · Indirecta en la Cena",
+		fileName: "meme-real-monkey-puppet.png",
+	},
+	"7808d354-61c0-4259-8e5f-75c7010403c9": {
+		newId: "7808d354-61c0-4259-8e5f-75c7010403ca",
+		name: "Meme IA · Indirecta en la Cena",
 		fileName: "meme-real-monkey-puppet.png",
 	},
 	"f6e0f22d-966c-4de5-88ce-58df01a03dbf": {
-		newId: "7808d354-61c0-4259-8e5f-75c7010403c9",
-		name: "Meme IA · Mirada Incómoda de Costado (Monkey Puppet)",
+		newId: "7808d354-61c0-4259-8e5f-75c7010403ca",
+		name: "Meme IA · Indirecta en la Cena",
 		fileName: "meme-real-monkey-puppet.png",
 	},
 	"801f405a-95b0-476d-906d-42ef77b97198": {
-		newId: "801f405a-95b0-476d-906d-42ef77b971a9",
-		name: "Meme IA · Kermit Oscuro (Tu Subconsciente)",
+		newId: "801f405a-95b0-476d-906d-42ef77b971aa",
+		name: "Meme IA · Emoción vs Cerebro",
+		fileName: "meme-real-evil-kermit.png",
+	},
+	"801f405a-95b0-476d-906d-42ef77b971a9": {
+		newId: "801f405a-95b0-476d-906d-42ef77b971aa",
+		name: "Meme IA · Emoción vs Cerebro",
 		fileName: "meme-real-evil-kermit.png",
 	},
 };

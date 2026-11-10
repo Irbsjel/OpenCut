@@ -25,10 +25,12 @@ export interface MemePlacementInputCue {
 
 export interface DetectedMemePlacement {
 	cueIndex: number;
+	kind: "meme" | "image";
 	memeId: string;
 	memeName: string;
 	imageUrl: string;
 	caption: string;
+	imagePrompt?: string;
 }
 
 const EXCLUDED_TEMPLATE_MEME_IDS = new Set<string>([
@@ -97,6 +99,7 @@ function getKeyPoolPaths(): string[] {
 	return [
 		process.env.OPENCUT_KEYS_POOL_PATH,
 		path.join(home, ".config/opencut/keys_pool.json"),
+		path.join(home, "sistema/tools/nerv-sinapsis/keys_pool.json"),
 	].filter((p): p is string => Boolean(p));
 }
 
@@ -146,7 +149,6 @@ function preselectCandidateMemes(
 	cues: MemePlacementInputCue[],
 	limit = 90,
 ): CatalogMemeItem[] {
-	// Always include the top 36 iconic reaction/storytelling memes
 	const topCurated = CATALOG.slice(0, 36);
 	const selectedIds = new Set<string>(topCurated.map((m) => m.id));
 	const fullScriptNorm = normalizeText(cues.map((c) => c.text).join(" "));
@@ -183,9 +185,11 @@ function preselectCandidateMemes(
 		}
 	}
 
-	// Fill remaining slots with diverse popular templates from the 1414 catalog
 	if (result.length < limit) {
-		const step = Math.max(1, Math.floor(CATALOG.length / (limit - result.length)));
+		const step = Math.max(
+			1,
+			Math.floor(CATALOG.length / (limit - result.length)),
+		);
 		for (let i = 36; i < CATALOG.length && result.length < limit; i += step) {
 			const m = CATALOG[i]!;
 			if (!selectedIds.has(m.id)) {
@@ -216,7 +220,6 @@ async function querySinaiPoolJson({
 	systemPrompt: string;
 	userPrompt: string;
 }): Promise<{ rawText: string; engine: string } | null> {
-	// 1. Try local OpenAI-compatible AI daemon (127.0.0.1:8099) if active
 	try {
 		const controller = new AbortController();
 		const t = setTimeout(() => controller.abort(), 4500);
@@ -229,7 +232,7 @@ async function querySinaiPoolJson({
 					{ role: "user", content: userPrompt },
 				],
 				temperature: 0.2,
-				max_tokens: 1400,
+				max_tokens: 1500,
 			}),
 			signal: controller.signal,
 		});
@@ -244,13 +247,12 @@ async function querySinaiPoolJson({
 			}
 		}
 	} catch {
-		// daemon not running on this node, proceed to configured keys_pool.json
+		// proceed to keys_pool.json
 	}
 
 	const providers = await loadSinaiPool();
 	if (!providers) return null;
 
-	// 2. Rotate across Gemini models in Sinaí pool
 	const gemini = providers.gemini;
 	const geminiKeys = (gemini?.keys ?? []).filter(
 		(k) => typeof k === "string" && k.trim().length > 0,
@@ -304,7 +306,6 @@ async function querySinaiPoolJson({
 		}
 	}
 
-	// 3. Rotate across OpenAI-compatible providers in Sinaí pool (openai, cloudflare, groq, cerebras, openrouter)
 	for (const provName of [
 		"openai",
 		"cloudflare",
@@ -342,7 +343,7 @@ async function querySinaiPoolJson({
 								{ role: "user", content: userPrompt },
 							],
 							temperature: 0.25,
-							max_tokens: 1400,
+							max_tokens: 1500,
 						}),
 						signal: controller.signal,
 					});
@@ -365,6 +366,28 @@ async function querySinaiPoolJson({
 	return null;
 }
 
+const CONCEPTUAL_IMAGE_KEYWORDS = [
+	"cerebro",
+	"hemisferio",
+	"hemisferios",
+	"neurona",
+	"neuronal",
+	"sinapsis",
+	"puente",
+	"corteza",
+	"amigdala",
+	"memoria",
+	"universo",
+	"cosmos",
+	"ciencia",
+	"fisica",
+	"atomo",
+	"energia",
+	"evolucion",
+	"historia",
+	"aprendizaje",
+];
+
 function buildSemanticFallbackPlacements(
 	cues: MemePlacementInputCue[],
 ): DetectedMemePlacement[] {
@@ -379,6 +402,31 @@ function buildSemanticFallbackPlacements(
 		if (cue.startTime - lastPlacedTime < 8.5) continue;
 		const norm = normalizeText(cue.text);
 		if (norm.length < 10) continue;
+
+		// Check if this cue is better suited for an illustrative AI image instead of a meme
+		const matchedConcept = CONCEPTUAL_IMAGE_KEYWORDS.find((kw) =>
+			norm.includes(kw),
+		);
+		if (matchedConcept) {
+			lastPlacedTime = cue.startTime;
+			const cleanWords = cue.text
+				.replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, "")
+				.trim()
+				.split(/\s+/)
+				.slice(0, 5)
+				.join(" ");
+			const prompt = `3D vibrant conceptual illustration representing "${cue.text.trim()}", glowing neural or scientific visual metaphor, cinematic lighting, centered subject, no text`;
+			placements.push({
+				cueIndex: cue.index,
+				kind: "image",
+				memeId: "ai-generated-image",
+				memeName: `Imagen IA · ${cleanWords}`,
+				imageUrl: `/videos/api/memes/generate-image?prompt=${encodeURIComponent(prompt)}`,
+				caption: cleanWords,
+				imagePrompt: prompt,
+			});
+			continue;
+		}
 
 		let bestMeme: CatalogMemeItem | null = null;
 		let bestScore = 0;
@@ -409,6 +457,7 @@ function buildSemanticFallbackPlacements(
 				.join(" ");
 			placements.push({
 				cueIndex: cue.index,
+				kind: "meme",
 				memeId: bestMeme.id,
 				memeName: bestMeme.name,
 				imageUrl: `/videos/api/memes/image?id=${encodeURIComponent(bestMeme.id)}`,
@@ -450,18 +499,20 @@ export async function POST(request: Request) {
 			.join("\n");
 
 		const systemPrompt =
-			"Eres el director creativo de Sinaí para edición de video viral y educativo. " +
-			"Tu tarea es analizar las líneas de subtítulos de un video y elegir SOLO aquellos momentos clave donde insertar un MEME REAL DE REACCIÓN EN UNA SOLA IMAGEN (que se entienda de inmediato en un vistazo, JAMÁS plantillas multipanel vacías) sea 100% congruente, gracioso o ilustrativo de lo que se está explicando. " +
+			"Eres el director creativo visual de Sinaí para edición de video viral y educativo. " +
+			"Tu tarea es analizar las líneas de subtítulos de un video y elegir SOLO aquellos momentos clave (dejando al menos 7 a 12 segundos entre uno y otro) donde insertar un apoyo visual en pantalla. " +
+			"Para cada momento elegido, DEBES decidir inteligentemente si conviene más:\n" +
+			"A) `\"kind\": \"meme\"`: Cuando el momento es cómico, irónico, sarcástico o de reacción cotidiana -> elige un `memeId` válido del catálogo (todos son reacciones de una sola imagen, JAMÁS plantillas) y escribe un `caption` corto y gracioso en español (máximo 7 palabras) que se entienda en una sola imagen.\n" +
+			"B) `\"kind\": \"image\"`: Cuando en vez de un meme conviene más una IMAGEN ILUSTRATIVA O CONCEPTUAL (por ejemplo, cuando se explica el cerebro, un puente neuronal, una metáfora visual, ciencia, emociones profundas o aprendizaje) -> pon `\"kind\": \"image\"`, escribe un `imagePrompt` en inglés descriptivo y cinematográfico para generar esa imagen con IA (sin texto ni letras dentro de la imagen), y un `caption` corto en español (3 a 5 palabras) como título.\n" +
 			"REGLAS ESTRICTAS:\n" +
-			"1. NO pongas memes en todas las líneas: selecciona SOLO donde realmente aplique y aporte valor cómico o narrativo (deja al menos 7 a 12 segundos de separación entre un meme y el siguiente).\n" +
-			"2. Usa únicamente `memeId` válidos de la lista proporcionada (todos son reacciones directas de una sola imagen, no plantillas) y no repitas el mismo `memeId`.\n" +
-			"3. Para cada momento elegido, escribe un `caption` de remate corto, gracioso y 100% entendible en español (máximo 6 palabras) que haga que el meme se entienda por sí mismo en esa sola imagen.\n" +
-			'4. Devuelve ÚNICAMENTE JSON válido con el formato: {"placements": [{"cueIndex": 2, "memeId": "waiting-skeleton", "caption": "Esperando a Doña Lucha"}]}';
+			"1. Combina memes reales (`kind: \"meme\"`) en momentos de humor/reacción e imágenes generadas (`kind: \"image\"`) en momentos conceptuales/explicativos.\n" +
+			"2. No repitas el mismo `memeId`.\n" +
+			'3. Devuelve ÚNICAMENTE JSON válido con el formato: {"placements": [{"cueIndex": 4, "kind": "meme", "memeId": "sad-escobar", "caption": "LO TENÍAS EN LA PUNTA DE LA LENGUA"}, {"cueIndex": 64, "kind": "image", "imagePrompt": "3D glowing neural bridge connecting two brain hemispheres, cinematic volumetric lighting, no text", "caption": "PUENTE NEURONAL"}]}';
 
 		const userPrompt =
-			`CATÁLOGO DE MEMES DISPONIBLES (preseleccionados de ${CATALOG.length} memes):\n${catalogSummary}\n\n` +
+			`CATÁLOGO DE MEMES DISPONIBLES (preseleccionados de ${CATALOG.length} memes de una sola imagen):\n${catalogSummary}\n\n` +
 			`SUBTÍTULOS DEL VIDEO:\n${cuesSummary}\n\n` +
-			"Selecciona los momentos ideales donde aplica colocar un meme congruente y responde solo en JSON.";
+			"Selecciona los momentos ideales decidiendo en cada uno si conviene más `meme` o `image` y responde solo en JSON.";
 
 		const aiResponse = await querySinaiPoolJson({
 			systemPrompt,
@@ -474,8 +525,10 @@ export async function POST(request: Request) {
 				const parsed = JSON.parse(cleaned) as {
 					placements?: Array<{
 						cueIndex?: number;
+						kind?: "meme" | "image";
 						memeId?: string;
 						caption?: string;
+						imagePrompt?: string;
 					}>;
 				};
 
@@ -487,20 +540,44 @@ export async function POST(request: Request) {
 					for (const item of parsed.placements) {
 						const cueIdx = Number(item.cueIndex);
 						const cue = rawCues.find((c) => c.index === cueIdx);
-						const meme = item.memeId ? CATALOG_MAP.get(item.memeId) : undefined;
-						if (!cue || !meme) continue;
+						if (!cue) continue;
 						if (hasLaterCues && cue.startTime < 2.2) continue;
 						if (cue.startTime - lastSec < 5.5) continue;
+
+						if (item.kind === "image" || (!item.memeId && item.imagePrompt)) {
+							const prompt = String(
+								item.imagePrompt ||
+									`3D cinematic conceptual illustration of ${cue.text}`,
+							).trim();
+							const caption = String(item.caption || cue.text)
+								.trim()
+								.slice(0, 42);
+							lastSec = cue.startTime;
+							validPlacements.push({
+								cueIndex: cue.index,
+								kind: "image",
+								memeId: "ai-generated-image",
+								memeName: `Imagen IA · ${caption}`,
+								imageUrl: `/videos/api/memes/generate-image?prompt=${encodeURIComponent(prompt)}`,
+								caption,
+								imagePrompt: prompt,
+							});
+							continue;
+						}
+
+						const meme = item.memeId ? CATALOG_MAP.get(item.memeId) : undefined;
+						if (!meme) continue;
 						lastSec = cue.startTime;
 
 						validPlacements.push({
 							cueIndex: cue.index,
+							kind: "meme",
 							memeId: meme.id,
 							memeName: meme.name,
 							imageUrl: `/videos/api/memes/image?id=${encodeURIComponent(meme.id)}`,
 							caption: String(item.caption || meme.name)
 								.trim()
-								.slice(0, 42),
+								.slice(0, 48),
 						});
 					}
 
@@ -532,7 +609,7 @@ export async function POST(request: Request) {
 				error:
 					error instanceof Error
 						? error.message
-						: "Error detectando memes contextuales.",
+						: "Error detectando memes e imágenes contextuales.",
 			},
 			{ status: 500 },
 		);
