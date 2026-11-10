@@ -17,11 +17,11 @@ export function computeRippleAdjustments({
 	beforeTracks: SceneTracks;
 	afterTracks: SceneTracks;
 }): RippleAdjustment[] {
-	const beforeTrackList = [
-		...beforeTracks.overlay,
-		beforeTracks.main,
-		...beforeTracks.audio,
-	];
+	// Only compute ripple shifts on the primary sequential main video track.
+	// Overlay tracks (subtitles, titles, stickers, contextual memes/images, effects)
+	// and audio tracks are anchored to absolute timeline timestamps and must never
+	// ripple-shift subsequent elements when an individual cue or overlay is deleted or trimmed.
+	const beforeTrackList = [beforeTracks.main];
 	const afterTrackList = [
 		...afterTracks.overlay,
 		afterTracks.main,

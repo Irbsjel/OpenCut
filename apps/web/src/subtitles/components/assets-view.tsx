@@ -470,7 +470,19 @@ export function Captions() {
 			const segments = timelineSubtitles.map((item) => {
 				let words: Array<{ word: string; start: number; end: number }> | undefined;
 				const rawWT = item.element.params?.wordTimings;
-				if (typeof rawWT === "string" && rawWT.startsWith("[")) {
+				if (Array.isArray(rawWT)) {
+					words = (
+						rawWT as Array<{
+							word: string;
+							startOffset: number;
+							endOffset: number;
+						}>
+					).map((w) => ({
+						word: w.word,
+						start: item.startTimeSec + w.startOffset,
+						end: item.startTimeSec + w.endOffset,
+					}));
+				} else if (typeof rawWT === "string" && rawWT.startsWith("[")) {
 					try {
 						const parsed = JSON.parse(rawWT) as Array<{
 							word: string;
@@ -1210,6 +1222,22 @@ export function Captions() {
 		const rightStart = Number((item.startTimeSec + leftDur).toFixed(3));
 		const canvasSize = editor.project.getActive().settings.canvasSize;
 
+		const leftWords = leftText.trim().split(/\s+/).filter(Boolean);
+		const leftStep = leftDur / Math.max(1, leftWords.length);
+		const leftWordTimings = leftWords.map((w, idx) => ({
+			word: activeStyle.uppercase ? w.toUpperCase() : w,
+			startOffset: Number((idx * leftStep).toFixed(3)),
+			endOffset: Number(((idx + 1) * leftStep).toFixed(3)),
+		}));
+
+		const rightWords = rightText.trim().split(/\s+/).filter(Boolean);
+		const rightStep = rightDur / Math.max(1, rightWords.length);
+		const rightWordTimings = rightWords.map((w, idx) => ({
+			word: activeStyle.uppercase ? w.toUpperCase() : w,
+			startOffset: Number((idx * rightStep).toFixed(3)),
+			endOffset: Number(((idx + 1) * rightStep).toFixed(3)),
+		}));
+
 		const newRightEl = buildSubtitleTextElement({
 			index: timelineSubtitles.length + 1,
 			caption: {
@@ -1224,6 +1252,7 @@ export function Captions() {
 		newRightEl.params = {
 			...item.element.params,
 			content: rightText,
+			wordTimings: JSON.stringify(rightWordTimings),
 		};
 
 		const updateCmd = new UpdateElementsCommand({
@@ -1236,6 +1265,7 @@ export function Captions() {
 						params: {
 							...item.element.params,
 							content: leftText,
+							wordTimings: JSON.stringify(leftWordTimings),
 						},
 					},
 				},
@@ -1260,6 +1290,13 @@ export function Captions() {
 			current.durationSec + next.durationSec,
 			next.endTimeSec - current.startTimeSec,
 		);
+		const mergedWords = mergedText.split(/\s+/).filter(Boolean);
+		const mergedStep = Math.max(0.2, mergedDur) / Math.max(1, mergedWords.length);
+		const mergedWordTimings = mergedWords.map((w, wIdx) => ({
+			word: activeStyle.uppercase ? w.toUpperCase() : w,
+			startOffset: Number((wIdx * mergedStep).toFixed(3)),
+			endOffset: Number(((wIdx + 1) * mergedStep).toFixed(3)),
+		}));
 
 		const updateCmd = new UpdateElementsCommand({
 			updates: [
@@ -1271,6 +1308,7 @@ export function Captions() {
 						params: {
 							...current.element.params,
 							content: mergedText,
+							wordTimings: JSON.stringify(mergedWordTimings),
 						},
 					},
 				},

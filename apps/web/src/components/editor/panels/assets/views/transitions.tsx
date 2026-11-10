@@ -98,14 +98,12 @@ export function TransitionsView() {
 
 		for (const { track, label } of orderedTracks) {
 			if ("hidden" in track && track.hidden) continue;
+			if (track.type !== "video") continue;
 			const visualElems = track.elements
 				.filter(
 					(el): el is VisualElement =>
-						el.type === "video" ||
-						el.type === "image" ||
-						el.type === "text" ||
-						el.type === "sticker" ||
-						el.type === "graphic",
+						(el.type === "video" || el.type === "image") &&
+						el.params?.isSubtitleOverlay !== true,
 				)
 				.slice()
 				.sort((a, b) => a.startTime - b.startTime);
