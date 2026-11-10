@@ -1,58 +1,41 @@
 use gpui::{
-    px, size, App, AppContext, Application, Bounds, SharedString, TitlebarOptions, WindowBounds,
-    WindowOptions,
+    div, prelude::*, px, rgb, size, App, Application, Bounds, Context, SharedString, Window,
+    WindowBounds, WindowOptions,
 };
 
-mod components;
-mod panels;
-mod shell;
-mod theme;
+struct AppWindow {
+    title: SharedString,
+}
 
-use shell::Shell;
+impl Render for AppWindow {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .size_full()
+            .bg(rgb(0x0f0f0f))
+            .flex()
+            .justify_center()
+            .items_center()
+            .text_xl()
+            .text_color(rgb(0xffffff))
+            .child(self.title.clone())
+    }
+}
 
 fn main() {
-    #[cfg(target_os = "linux")]
-    {
-        let is_wsl = std::fs::read_to_string("/proc/sys/kernel/osrelease")
-            .is_ok_and(|release| release.to_ascii_lowercase().contains("microsoft"));
-        let x11_configured =
-            std::env::var_os("DISPLAY").is_some_and(|display| !display.is_empty());
-        let wayland_configured =
-            std::env::var_os("WAYLAND_DISPLAY").is_some_and(|display| !display.is_empty());
-
-        if is_wsl && x11_configured && wayland_configured {
-            // GPUI 0.2.2 requires xdg_wm_base v2+, while current WSLg advertises v1 and panics.
-            // Safety: this is the first statement in `main`, before GPUI or anything
-            // else has spawned a thread. No other thread exists yet, so keep this
-            // block first if anything is added above it.
-            unsafe {
-                std::env::remove_var("WAYLAND_DISPLAY");
-            }
-        }
-    }
-
     Application::new().run(|cx: &mut App| {
-        let bounds = Bounds::centered(None, size(px(960.), px(600.)), cx);
+        let bounds = Bounds::centered(None, size(px(1280.), px(720.)), cx);
         cx.open_window(
             WindowOptions {
-                titlebar: Some(TitlebarOptions {
-                    title: Some(SharedString::from("OpenCut")),
-                    ..Default::default()
-                }),
-                window_bounds: Some(WindowBounds::Maximized(bounds)),
+                window_bounds: Some(WindowBounds::Windowed(bounds)),
                 ..Default::default()
             },
-            |window, cx| {
-                cx.new(|cx| {
-                    cx.observe_window_appearance(window, |_, window, _| {
-                        window.refresh();
-                    })
-                    .detach();
-
-                    Shell::new(cx)
+            |_, cx| {
+                cx.new(|_| AppWindow {
+                    title: "OpenCut".into(),
                 })
             },
         )
-        .expect("failed to open the main window");
+        .unwrap();
+        cx.activate(true);
     });
 }
