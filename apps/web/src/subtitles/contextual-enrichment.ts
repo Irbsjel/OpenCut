@@ -82,10 +82,12 @@ export const MEME_CATALOG: ReadonlyArray<CatalogMeme> = (
 
 export interface SinaiMemePlacement {
 	cueIndex: number;
+	kind?: "meme" | "image";
 	memeId: string;
 	memeName: string;
 	imageUrl: string;
 	caption: string;
+	imagePrompt?: string;
 }
 
 export type CaptionPacingMode = "dynamic" | "balanced" | "sentence";
@@ -1458,7 +1460,7 @@ function loadMemeImageElement(url: string): Promise<HTMLImageElement | null> {
 	return new Promise((resolve) => {
 		const img = new Image();
 		img.crossOrigin = "anonymous";
-		const timer = setTimeout(() => resolve(null), 8000);
+		const timer = setTimeout(() => resolve(null), 12000);
 		img.onload = () => {
 			clearTimeout(timer);
 			resolve(img);
@@ -1469,6 +1471,211 @@ function loadMemeImageElement(url: string): Promise<HTMLImageElement | null> {
 		};
 		img.src = url;
 	});
+}
+
+/**
+ * Automatically detects and crops out solid white or solid black blank template bars
+ * at the top, bottom, left, or right of any meme image so only the real photo is drawn.
+ */
+function detectPhotoCropRect(img: HTMLImageElement): {
+	sx: number;
+	sy: number;
+	sw: number;
+	sh: number;
+} {
+	const nw = img.naturalWidth || img.width;
+	const nh = img.naturalHeight || img.height;
+	if (nw <= 32 || nh <= 32) {
+		return { sx: 0, sy: 0, sw: nw, sh: nh };
+	}
+	try {
+		const probeW = 96;
+		const probeH = 96;
+		const c = document.createElement("canvas");
+		c.width = probeW;
+		c.height = probeH;
+		const pctx = c.getContext("2d");
+		if (!pctx) return { sx: 0, sy: 0, sw: nw, sh: nh };
+		pctx.drawImage(img, 0, 0, probeW, probeH);
+		const data = pctx.getImageData(0, 0, probeW, probeH).data;
+
+		const isBlankRow = (y: number): boolean => {
+			let whiteCount = 0;
+			for (let x = 4; x < probeW - 4; x += 2) {
+				const idx = (y * probeW + x) * 4;
+				const r = data[idx] ?? 0;
+				const g = data[idx + 1] ?? 0;
+				const b = data[idx + 2] ?? 0;
+				if (r > 240 && g > 240 && b > 240) whiteCount++;
+			}
+			const samples = Math.floor((probeW - 8) / 2);
+			return whiteCount >= samples * 0.88;
+		};
+
+		const isBlankCol = (x: number): boolean => {
+			let whiteCount = 0;
+			for (let y = 4; y < probeH - 4; y += 2) {
+				const idx = (y * probeW + x) * 4;
+				const r = data[idx] ?? 0;
+				const g = data[idx + 1] ?? 0;
+				const b = data[idx + 2] ?? 0;
+				if (r > 240 && g > 240 && b > 240) whiteCount++;
+			}
+			const samples = Math.floor((probeH - 8) / 2);
+			return whiteCount >= samples * 0.88;
+		};
+
+		let top = 0;
+		while (top < probeH * 0.48 && isBlankRow(top)) top++;
+		let bottom = probeH - 1;
+		while (bottom > probeH * 0.52 && isBlankRow(bottom)) bottom--;
+		let left = 0;
+		while (left < probeW * 0.48 && isBlankCol(left)) left++;
+		let right = probeW - 1;
+		while (right > probeW * 0.52 && isBlankCol(right)) right--;
+
+		const sx = Math.round((left / probeW) * nw);
+		const sy = Math.round((top / probeH) * nh);
+		const sw = Math.max(32, Math.round(((right - left + 1) / probeW) * nw));
+		const sh = Math.max(32, Math.round(((bottom - top + 1) / probeH) * nh));
+		return { sx, sy, sw, sh };
+	} catch {
+		return { sx: 0, sy: 0, sw: nw, sh: nh };
+	}
+}
+
+/**
+ * Generates a real AI contextual image (via /api/memes/generate-image powered by Flux-1-Schnell)
+ * when a subtitle segment is better suited for a conceptual/illustrative image instead of a meme.
+ * Preserves transparent backgrounds with white/black die-cut borders if transparent, or frames cleanly.
+ */
+export async function generateContextualAIImageFile({
+	text,
+	imagePrompt,
+	title,
+	index = 0,
+	borderColor = "white",
+}: {
+	text: string;
+	imagePrompt?: string;
+	title?: string;
+	index?: number;
+	borderColor?: "white" | "black";
+}): Promise<{ file: File; title: string }> {
+	const cleanText = stripTrailingEmoji(text);
+	const context = analyzeSubtitleContext(cleanText);
+	const displayTitle = (title || context.visualTitle).trim().slice(0, 28);
+	const effectivePrompt =
+		imagePrompt ||
+		`3D vibrant conceptual illustration representing "${cleanText}", expressive centerpiece subject, dramatic lighting, no text`;
+
+	const basePath = process.env.NEXT_PUBLIC_BASE_PATH || "/videos";
+	const genUrl = `${basePath}/api/memes/generate-image?prompt=${encodeURIComponent(effectivePrompt)}&text=${encodeURIComponent(cleanText)}`;
+	const loadedImg = await loadMemeImageElement(genUrl);
+
+	if (
+		!loadedImg ||
+		loadedImg.naturalWidth <= 0 ||
+		loadedImg.naturalHeight <= 0
+	) {
+		const fallbackSticker = await generateContextualVisualCardFile({
+			text: cleanText,
+			index,
+			borderColor,
+		});
+		return { file: fallbackSticker.file, title: fallbackSticker.title };
+	}
+
+	const size = 580;
+
+	if (hasTransparentPixels(loadedImg)) {
+		const fg = document.createElement("canvas");
+		fg.width = size;
+		fg.height = size;
+		const fgCtx = fg.getContext("2d");
+		if (fgCtx) {
+			fgCtx.clearRect(0, 0, size, size);
+			const pad = 28;
+			const avail = size - pad * 2;
+			const scale = Math.min(
+				avail / loadedImg.naturalWidth,
+				avail / loadedImg.naturalHeight,
+			);
+			const dw = loadedImg.naturalWidth * scale;
+			const dh = loadedImg.naturalHeight * scale;
+			fgCtx.drawImage(
+				loadedImg,
+				(size - dw) / 2,
+				(size - dh) / 2,
+				dw,
+				dh,
+			);
+		}
+		const stickerCanvas = renderTransparentCanvasWithDieCutBorder({
+			fgCanvas: fg,
+			borderColor,
+			borderWidthPx: 12,
+		});
+		const blob: Blob = await new Promise((resolve) =>
+			stickerCanvas.toBlob((b) => resolve(b || new Blob()), "image/png", 0.95),
+		);
+		return {
+			file: new File([blob], `imagen-ia-sin-fondo-${index + 1}.png`, {
+				type: "image/png",
+			}),
+			title: displayTitle,
+		};
+	}
+
+	const canvas = document.createElement("canvas");
+	canvas.width = size;
+	canvas.height = size;
+	const ctx = canvas.getContext("2d");
+	if (ctx) {
+		ctx.clearRect(0, 0, size, size);
+		const pad = 16;
+		const cardW = size - pad * 2;
+		const cardH = size - pad * 2;
+		const radius = 28;
+
+		ctx.save();
+		ctx.shadowColor = "rgba(0, 0, 0, 0.55)";
+		ctx.shadowBlur = 22;
+		ctx.beginPath();
+		ctx.roundRect(pad, pad, cardW, cardH, radius);
+		ctx.clip();
+
+		const scaleCover = Math.max(
+			cardW / loadedImg.naturalWidth,
+			cardH / loadedImg.naturalHeight,
+		);
+		const dw = loadedImg.naturalWidth * scaleCover;
+		const dh = loadedImg.naturalHeight * scaleCover;
+		ctx.drawImage(
+			loadedImg,
+			pad + (cardW - dw) / 2,
+			pad + (cardH - dh) / 2,
+			dw,
+			dh,
+		);
+		ctx.restore();
+
+		ctx.strokeStyle = borderColor === "black" ? "#000000" : "#ffffff";
+		ctx.lineWidth = 7;
+		ctx.beginPath();
+		ctx.roundRect(pad, pad, cardW, cardH, radius);
+		ctx.stroke();
+	}
+
+	const blob: Blob = await new Promise((resolve) =>
+		canvas.toBlob((b) => resolve(b || new Blob()), "image/png", 0.94),
+	);
+	return {
+		file: new File([blob], `imagen-ia-${index + 1}.png`, {
+			type: "image/png",
+		}),
+		title: displayTitle,
+	};
 }
 
 /**
@@ -1585,8 +1792,8 @@ export async function generateContextualMemeFile({
 		return { file, label: targetMeme.name, memeId: targetMeme.id };
 	}
 
-	// Real single-image reaction meme: render full reaction image with classic bold Impact meme caption
-	// directly over top/bottom so the entire meme is immediately understood in a single image.
+	// Real single-image reaction meme: crop out any blank white template bars and render
+	// with classic top/bottom Impact typography over subtle edge vignettes so faces stay uncovered.
 	const canvas = document.createElement("canvas");
 	canvas.width = size;
 	canvas.height = size;
@@ -1607,16 +1814,23 @@ export async function generateContextualMemeFile({
 		ctx.clip();
 
 		if (loadedImg && loadedImg.naturalWidth > 0 && loadedImg.naturalHeight > 0) {
-			// Draw single reaction image filling the frame (cover-balanced so the face is large and clear)
-			const scaleCover = Math.max(
-				cardW / loadedImg.naturalWidth,
-				cardH / loadedImg.naturalHeight,
-			);
-			const dw = loadedImg.naturalWidth * scaleCover;
-			const dh = loadedImg.naturalHeight * scaleCover;
+			const crop = detectPhotoCropRect(loadedImg);
+			const scaleCover = Math.max(cardW / crop.sw, cardH / crop.sh);
+			const dw = crop.sw * scaleCover;
+			const dh = crop.sh * scaleCover;
 			const dx = pad + (cardW - dw) / 2;
 			const dy = pad + (cardH - dh) / 2;
-			ctx.drawImage(loadedImg, dx, dy, dw, dh);
+			ctx.drawImage(
+				loadedImg,
+				crop.sx,
+				crop.sy,
+				crop.sw,
+				crop.sh,
+				dx,
+				dy,
+				dw,
+				dh,
+			);
 		} else if (
 			sourceCanvas &&
 			sourceCanvas.width > 0 &&
@@ -1659,27 +1873,45 @@ export async function generateContextualMemeFile({
 			ctx.fillText(archetype.emoji, size * 0.5, size * 0.5);
 		}
 
+		// Subtle top & bottom dark edge vignette so Impact text is 100% readable without covering the face
+		const topGrad = ctx.createLinearGradient(0, pad, 0, pad + 95);
+		topGrad.addColorStop(0, "rgba(0,0,0,0.62)");
+		topGrad.addColorStop(1, "rgba(0,0,0,0)");
+		ctx.fillStyle = topGrad;
+		ctx.fillRect(pad, pad, cardW, 95);
+
+		const botGrad = ctx.createLinearGradient(
+			0,
+			pad + cardH - 95,
+			0,
+			pad + cardH,
+		);
+		botGrad.addColorStop(0, "rgba(0,0,0,0)");
+		botGrad.addColorStop(1, "rgba(0,0,0,0.68)");
+		ctx.fillStyle = botGrad;
+		ctx.fillRect(pad, pad + cardH - 95, cardW, 95);
+
 		// Classic single-image meme top/bottom Impact caption with thick black stroke & white fill
-		ctx.font = '900 36px "Anton", "Impact", "Montserrat", sans-serif';
+		ctx.font = '900 33px "Anton", "Impact", "Montserrat", sans-serif';
 		ctx.textAlign = "center";
 		ctx.textBaseline = "middle";
 		ctx.lineJoin = "round";
-		ctx.lineWidth = 9;
+		ctx.lineWidth = 8;
 		ctx.strokeStyle = "#000000";
 		ctx.fillStyle = "#ffffff";
 
 		if (topLine && !bottomLine) {
-			const yBottom = pad + cardH - 42;
+			const yBottom = pad + cardH - 34;
 			ctx.strokeText(topLine, size * 0.5, yBottom, cardW - 28);
 			ctx.fillText(topLine, size * 0.5, yBottom, cardW - 28);
 		} else {
 			if (topLine) {
-				const yTop = pad + 40;
+				const yTop = pad + 34;
 				ctx.strokeText(topLine, size * 0.5, yTop, cardW - 28);
 				ctx.fillText(topLine, size * 0.5, yTop, cardW - 28);
 			}
 			if (bottomLine) {
-				const yBottom = pad + cardH - 38;
+				const yBottom = pad + cardH - 34;
 				ctx.strokeText(bottomLine, size * 0.5, yBottom, cardW - 28);
 				ctx.fillText(bottomLine, size * 0.5, yBottom, cardW - 28);
 			}

@@ -52,6 +52,7 @@ import {
 	MEME_CATALOG,
 	buildSmartCaptionChunks,
 	detectContextualMemesWithSinaiAI,
+	generateContextualAIImageFile,
 	generateContextualMemeFile,
 	generateContextualVisualCardFile,
 	getSuggestedEmojisForText,
@@ -433,6 +434,7 @@ export function Captions() {
 						typeof el.name === "string" &&
 						(el.name.startsWith("Meme ·") ||
 							el.name.startsWith("Meme IA ·") ||
+							el.name.startsWith("Imagen IA ·") ||
 							el.name.startsWith("Sticker ·") ||
 							el.params?.isSubtitleOverlay === true)
 					) {
@@ -715,20 +717,37 @@ export function Captions() {
 				const cue = cues[placement.cueIndex];
 				if (!cue) continue;
 				try {
-					const { file, label } = await generateContextualMemeFile({
-						text: cue.text,
-						memeId: placement.memeId,
-						captionOverride: placement.caption,
-						index: placement.cueIndex,
-						borderColor: stickerBorderColor,
-					});
-					await insertContextualOverlayFile({
-						file,
-						name: `Meme IA · ${label}`,
-						startTimeSec: cue.startTime,
-						durationSec: Math.min(3.0, Math.max(1.6, cue.duration)),
-						scale: 0.34,
-					});
+					if (placement.kind === "image") {
+						const { file, title } = await generateContextualAIImageFile({
+							text: cue.text,
+							imagePrompt: placement.imagePrompt,
+							title: placement.caption,
+							index: placement.cueIndex,
+							borderColor: stickerBorderColor,
+						});
+						await insertContextualOverlayFile({
+							file,
+							name: `Imagen IA · ${title}`,
+							startTimeSec: cue.startTime,
+							durationSec: Math.min(3.2, Math.max(1.8, cue.duration)),
+							scale: 0.34,
+						});
+					} else {
+						const { file, label } = await generateContextualMemeFile({
+							text: cue.text,
+							memeId: placement.memeId,
+							captionOverride: placement.caption,
+							index: placement.cueIndex,
+							borderColor: stickerBorderColor,
+						});
+						await insertContextualOverlayFile({
+							file,
+							name: `Meme IA · ${label}`,
+							startTimeSec: cue.startTime,
+							durationSec: Math.min(3.0, Math.max(1.6, cue.duration)),
+							scale: 0.34,
+						});
+					}
 					if (firstMemeStartSec === null) {
 						firstMemeStartSec = cue.startTime;
 					}
@@ -1400,26 +1419,26 @@ export function Captions() {
 	) => {
 		setBusyCueId(item.element.id);
 		try {
-			const { file, title, emoji } = await generateContextualVisualCardFile({
+			const { file, title } = await generateContextualAIImageFile({
 				text: item.content,
 				index: idx,
 				borderColor: stickerBorderColor,
 			});
 			await insertContextualOverlayFile({
 				file,
-				name: `Sticker · ${emoji} ${title}`,
+				name: `Imagen IA · ${title}`,
 				startTimeSec: item.startTimeSec,
-				durationSec: item.durationSec,
-				scale: 0.32,
+				durationSec: Math.min(3.2, Math.max(1.8, item.durationSec)),
+				scale: 0.34,
 			});
 			editor.playback.seek({
 				time: mediaTimeFromSeconds({ seconds: item.startTimeSec + 0.08 }),
 			});
 			toast.success(
-				`Sticker sin fondo (borde ${stickerBorderColor === "white" ? "blanco" : "negro"}): ${emoji} ${title}`,
+				`Imagen contextual IA colocada (borde ${stickerBorderColor === "white" ? "blanco" : "negro"}): ${title}`,
 			);
 		} catch {
-			toast.error("Failed to generate visual sticker");
+			toast.error("Failed to generate contextual image");
 		} finally {
 			setBusyCueId(null);
 		}
