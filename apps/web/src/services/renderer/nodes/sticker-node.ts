@@ -50,6 +50,9 @@ export function loadStickerSource({
 	})();
 
 	stickerSourceCache.set(stickerId, promise);
+	promise.catch(() => {
+		stickerSourceCache.delete(stickerId);
+	});
 	return promise;
 }
 

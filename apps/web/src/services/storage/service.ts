@@ -328,10 +328,19 @@ class StorageService {
 						const existingKeys = new Set(
 							await mediaMetadataAdapter.list().catch(() => []),
 						);
+						const remoteMediaIds = new Set<string>();
 						for (const m of bundle.mediaMetadata ?? []) {
 							if (!m?.id) continue;
+							remoteMediaIds.add(m.id);
 							if (!existingKeys.has(m.id) || remoteTime >= localTime) {
 								await mediaMetadataAdapter.set({ key: m.id, value: m });
+							}
+						}
+						if (remoteTime >= localTime && remoteMediaIds.size > 0) {
+							for (const oldKey of existingKeys) {
+								if (!remoteMediaIds.has(oldKey)) {
+									await mediaMetadataAdapter.remove(oldKey).catch(() => {});
+								}
 							}
 						}
 					}
@@ -818,7 +827,6 @@ class StorageService {
 		if (!file || !metadata) return null;
 
 		try {
-			const buf = await file.arrayBuffer();
 			const lowerName = (metadata.name || "").toLowerCase();
 			const defaultMime =
 				metadata.type === "video"
@@ -836,12 +844,18 @@ class StorageService {
 								: "image/png";
 			const resolvedMime =
 				file.type && file.type.length > 0 ? file.type : defaultMime;
-			file = new File([buf], metadata.name || id, {
-				type: resolvedMime,
-				lastModified: metadata.lastModified || Date.now(),
-			});
+			if (file.type !== resolvedMime || file.name !== (metadata.name || id)) {
+				file = new File(
+					[file.slice(0, file.size, resolvedMime)],
+					metadata.name || id,
+					{
+						type: resolvedMime,
+						lastModified: metadata.lastModified || Date.now(),
+					},
+				);
+			}
 		} catch {
-			// keep original file handle if buffer copy fails
+			// keep original file handle if zero-copy slice fails
 		}
 
 		let url: string;
@@ -885,9 +899,22 @@ class StorageService {
 		});
 
 		const mediaIds = await mediaMetadataAdapter.list();
-		const loaded = await Promise.all(
-			mediaIds.map((id) => this.loadMediaAsset({ projectId, id })),
+		const loaded: Array<MediaAsset | null> = new Array(mediaIds.length).fill(
+			null,
 		);
+		let cursor = 0;
+		const CONCURRENCY = 4;
+		const workers = Array.from({ length: CONCURRENCY }, async () => {
+			while (cursor < mediaIds.length) {
+				const idx = cursor++;
+				const id = mediaIds[idx];
+				if (!id) continue;
+				loaded[idx] = await this.loadMediaAsset({ projectId, id }).catch(
+					() => null,
+				);
+			}
+		});
+		await Promise.all(workers);
 		return loaded.filter((item): item is MediaAsset => item !== null);
 	}
 

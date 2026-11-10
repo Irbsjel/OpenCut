@@ -283,10 +283,20 @@ async function resolveImageNode({
 	node: ImageNode;
 	context: ResolveContext;
 }): Promise<ResolvedVisualSourceNodeState | null> {
-	const source = await loadImageSource({
-		url: node.params.url,
-		maxSourceSize: node.params.maxSourceSize,
-	});
+	const clipTime = context.time - node.params.timeOffset;
+	if (clipTime < 0 || clipTime >= node.params.duration) {
+		return null;
+	}
+
+	let source: Awaited<ReturnType<typeof loadImageSource>>;
+	try {
+		source = await loadImageSource({
+			url: node.params.url,
+			maxSourceSize: node.params.maxSourceSize,
+		});
+	} catch {
+		return null;
+	}
 	const visualState = resolveVisualState({
 		params: node.params,
 		context,
@@ -312,7 +322,17 @@ async function resolveStickerNode({
 	node: StickerNode;
 	context: ResolveContext;
 }): Promise<ResolvedVisualSourceNodeState | null> {
-	const source = await loadStickerSource({ stickerId: node.params.stickerId });
+	const clipTime = context.time - node.params.timeOffset;
+	if (clipTime < 0 || clipTime >= node.params.duration) {
+		return null;
+	}
+
+	let source: Awaited<ReturnType<typeof loadStickerSource>>;
+	try {
+		source = await loadStickerSource({ stickerId: node.params.stickerId });
+	} catch {
+		return null;
+	}
 	const sourceWidth = node.params.intrinsicWidth ?? source.width;
 	const sourceHeight = node.params.intrinsicHeight ?? source.height;
 	const visualState = resolveVisualState({
