@@ -90,11 +90,12 @@ export class MediaManager {
 						assetId: uniqueIds[0],
 					})
 				: new BatchCommand(
-						uniqueIds.map((id) =>
-							new RemoveMediaAssetCommand({
-								projectId,
-								assetId: id,
-							}),
+						uniqueIds.map(
+							(id) =>
+								new RemoveMediaAssetCommand({
+									projectId,
+									assetId: id,
+								}),
 						),
 					);
 
@@ -112,25 +113,8 @@ export class MediaManager {
 			this.assets = mediaAssets;
 			this.notify();
 
-			const videoAssets = mediaAssets.filter(
-				(asset) => asset.type === "video" && asset.file,
-			);
-			void (async () => {
-				let cursor = 0;
-				const workers = Array.from({ length: 2 }, async () => {
-					while (cursor < videoAssets.length) {
-						const asset = videoAssets[cursor++];
-						if (!asset?.file) continue;
-						await videoCache
-							.preloadVideo({
-								mediaId: asset.id,
-								file: asset.file,
-							})
-							.catch(() => {});
-					}
-				});
-				await Promise.all(workers);
-			})();
+			// Preview resolution already pre-rolls upcoming clips on demand. Opening
+			// every library video here keeps dozens of idle native decoders resident.
 		} catch (error) {
 			console.error("Failed to load media assets:", error);
 		} finally {

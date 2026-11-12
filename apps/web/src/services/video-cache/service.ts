@@ -1,3 +1,4 @@
+import { trimPreviewFrames } from "./preview-budget";
 import { seekExportVideo } from "./export-seek";
 import {
 	ALL_FORMATS,
@@ -17,7 +18,9 @@ import { VideoNode } from "@/services/renderer/nodes/video-node";
 const MAX_DECODE_DIMENSION = 640;
 const EXPORT_DECODE_DIMENSION = 1280;
 const BASE_CACHE_FPS = 30;
-const MAX_SCRUB_CACHE_FRAMES = 160;
+const MAX_SCRUB_CACHE_FRAMES = 24;
+const MAX_PREVIEW_CACHE_BYTES = 64 * 1024 * 1024;
+const MAX_RESIDENT_VIDEO_SINKS = 8;
 const RING_BUFFER_SIZE = 3;
 const MAX_ACTIVE_EXPORT_DECODERS = 4;
 
@@ -110,6 +113,7 @@ interface VideoSinkData {
 	frameStep: number;
 	scrubCache: Map<number, WrappedCanvas>;
 	disposed: boolean;
+	lastUsedWallMs: number;
 }
 
 function computeTargetDimensions({
@@ -259,6 +263,7 @@ export class VideoCache {
 	}
 
 	private pauseIdlePlayers(): void {
+		this.evictIdleVideoSinks();
 		const nowWall =
 			typeof performance !== "undefined" ? performance.now() : Date.now();
 		for (const sinkData of this.sinks.values()) {
@@ -276,6 +281,22 @@ export class VideoCache {
 					}
 				}
 			}
+		}
+	}
+
+	private evictIdleVideoSinks(): void {
+		if (this.sinks.size < MAX_RESIDENT_VIDEO_SINKS) return;
+		const now = performance.now();
+		const candidates = [...this.sinks.values()]
+			.filter(
+				(s) =>
+					now - s.lastUsedWallMs > 2500 &&
+					s.slots.every((slot) => !slot.seekInFlight),
+			)
+			.sort((a, b) => a.lastUsedWallMs - b.lastUsedWallMs);
+		for (const sink of candidates) {
+			if (this.sinks.size < MAX_RESIDENT_VIDEO_SINKS) break;
+			this.clearVideoSink({ mediaId: sink.mediaId });
 		}
 	}
 
@@ -320,6 +341,7 @@ export class VideoCache {
 		}
 		if (sinkData.disposed) return;
 
+		sinkData.lastUsedWallMs = performance.now();
 		const clampedTime =
 			sinkData.duration > 0
 				? Math.max(
@@ -355,12 +377,7 @@ export class VideoCache {
 					(!slot.lastFrame ||
 						Math.abs(slot.lastDrawnMediaTime - clampedTime) > 0.05)
 				) {
-					this.drawSlotFrame(
-						sinkData,
-						slot,
-						slot.videoEl.currentTime,
-						true,
-					);
+					this.drawSlotFrame(sinkData, slot, slot.videoEl.currentTime, true);
 				}
 				// Warm-start hardware decoder right before the clip junction (within 85ms) so there is zero play() spin-up pause at the cut!
 				if (
@@ -442,6 +459,7 @@ export class VideoCache {
 		const sinkData = this.sinks.get(mediaId);
 		if (!sinkData || sinkData.disposed) return null;
 
+		sinkData.lastUsedWallMs = performance.now();
 		const clampedTime =
 			sinkData.duration > 0
 				? Math.max(
@@ -711,7 +729,7 @@ export class VideoCache {
 		if (sinkData.scrubCache.has(targetIdx)) return;
 		if (sinkData.scrubCache.size >= MAX_SCRUB_CACHE_FRAMES) {
 			const oldestKey = sinkData.scrubCache.keys().next().value;
-			if (oldestKey !== undefined && oldestKey !== 0) {
+			if (oldestKey !== undefined) {
 				sinkData.scrubCache.delete(oldestKey);
 			}
 		}
@@ -728,6 +746,7 @@ export class VideoCache {
 				timestamp: frame.timestamp,
 				duration: frame.duration,
 			});
+			trimPreviewFrames(this.sinks.values(), MAX_PREVIEW_CACHE_BYTES);
 		} catch {
 			// ignore
 		}
@@ -759,9 +778,7 @@ export class VideoCache {
 			}
 			await Promise.race([
 				slot.seekInFlight,
-				new Promise((r) =>
-					setTimeout(r, shouldPlayAfterSeek ? 35 : 160),
-				),
+				new Promise((r) => setTimeout(r, shouldPlayAfterSeek ? 35 : 160)),
 			]);
 		}
 
@@ -803,10 +820,7 @@ export class VideoCache {
 
 				if (Math.abs(v.currentTime - seekDest) > 0.015) {
 					await new Promise<void>((resolve) => {
-						const t = setTimeout(
-							resolve,
-							shouldPlayAfterSeek ? 180 : 260,
-						);
+						const t = setTimeout(resolve, shouldPlayAfterSeek ? 180 : 260);
 						v.addEventListener(
 							"seeked",
 							() => {
@@ -1410,10 +1424,14 @@ export class VideoCache {
 		);
 	}
 
-	async waitForAllVideosHarvested(rootNode: AnyBaseNode): Promise<void> {
+	async preloadInitialVideos(rootNode: AnyBaseNode): Promise<void> {
 		const videoNodes: VideoNode[] = [];
 		const walk = (node: AnyBaseNode) => {
-			if (node instanceof VideoNode) {
+			if (
+				node instanceof VideoNode &&
+				node.params.timeOffset <= 0 &&
+				node.params.duration > 0
+			) {
 				videoNodes.push(node);
 			}
 			for (const child of node.children) {
@@ -1541,7 +1559,12 @@ export class VideoCache {
 		mediaId: string;
 		file: File;
 	}): Promise<void> {
-		if (this.sinks.has(mediaId)) return;
+		const existing = this.sinks.get(mediaId);
+		if (existing) {
+			existing.lastUsedWallMs = performance.now();
+			return;
+		}
+		this.evictIdleVideoSinks();
 
 		if (this.initPromises.has(mediaId)) {
 			await this.initPromises.get(mediaId);
@@ -1725,6 +1748,7 @@ export class VideoCache {
 				frameStep,
 				scrubCache: new Map(),
 				disposed: false,
+				lastUsedWallMs: performance.now(),
 			};
 
 			if (video0.readyState < 2 || video0.currentTime > 0.05) {
@@ -1767,10 +1791,7 @@ export class VideoCache {
 				);
 			}
 		} catch (error) {
-			console.error(
-				`Failed to initialize video sink for ${mediaId}:`,
-				error,
-			);
+			console.error(`Failed to initialize video sink for ${mediaId}:`, error);
 		}
 	}
 

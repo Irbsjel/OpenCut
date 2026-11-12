@@ -179,6 +179,20 @@ function PreviewCanvas({
 		});
 	}, [nativeWidth, nativeHeight, activeProject.settings.fps]);
 
+	useEffect(() => {
+		// Logical scene coordinates stay at the project resolution. Only the
+		// preview backing store follows the visible size (including zoom and DPR).
+		const scale =
+			viewport.sceneWidth > 0
+				? Math.min(
+						1,
+						(viewport.sceneWidth * window.devicePixelRatio) / nativeWidth,
+					)
+				: 1;
+		renderer.setPreviewScale(scale);
+		lastFrameRef.current = -1;
+	}, [renderer, nativeWidth, viewport.sceneWidth]);
+
 	// Mount the compositor's output canvas directly into the preview. wgpu
 	// renders straight into this element, so there is no intermediate copy —
 	// the container div owns positioning/styling, the canvas itself fills it.
@@ -359,20 +373,20 @@ function PreviewCanvas({
 								ref={viewportRef}
 								className="relative flex size-full min-h-0 min-w-0 items-center justify-center overflow-hidden"
 							>
-							<div
-								ref={canvasMountRef}
-								className="absolute block border"
-								style={{
-									left: viewport.sceneLeft,
-									top: viewport.sceneTop,
-									width: viewport.sceneWidth,
-									height: viewport.sceneHeight,
-									background:
-										activeProject.settings.background.type === "blur"
-											? "transparent"
-											: activeProject?.settings.background.color,
-								}}
-							/>
+								<div
+									ref={canvasMountRef}
+									className="absolute block border"
+									style={{
+										left: viewport.sceneLeft,
+										top: viewport.sceneTop,
+										width: viewport.sceneWidth,
+										height: viewport.sceneHeight,
+										background:
+											activeProject.settings.background.type === "blur"
+												? "transparent"
+												: activeProject?.settings.background.color,
+									}}
+								/>
 								<PreviewOverlayLayer
 									instances={overlayInstances}
 									plane="under-interaction"

@@ -302,8 +302,8 @@ export class SceneExporter extends EventEmitter<SceneExporterEvents> {
 				}
 			}
 
-			await videoCache.waitForAllVideosHarvested(rootNode);
 			videoCache.setExportMode(true);
+			await videoCache.preloadInitialVideos(rootNode);
 
 			this.emit("progress", 0.01);
 			let lastEmittedProgress = 0.01;

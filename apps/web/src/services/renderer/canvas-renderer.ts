@@ -22,6 +22,11 @@ export class CanvasRenderer {
 	width: number;
 	height: number;
 	fps: FrameRate;
+	private previewScale = 1;
+
+	setPreviewScale(scale: number): void {
+		this.previewScale = Math.max(0.01, Math.min(1, scale));
+	}
 
 	constructor({ width, height, fps }: CanvasRendererParams) {
 		this.width = width;
@@ -35,8 +40,8 @@ export class CanvasRenderer {
 
 	getOutputCanvas(): HTMLCanvasElement {
 		wasmCompositor.ensureInitialized({
-			width: this.width,
-			height: this.height,
+			width: Math.max(1, Math.round(this.width * this.previewScale)),
+			height: Math.max(1, Math.round(this.height * this.previewScale)),
 		});
 		return wasmCompositor.getCanvas();
 	}
@@ -69,8 +74,8 @@ export class CanvasRenderer {
 		});
 		if (!targetCtx) {
 			wasmCompositor.ensureInitialized({
-				width: this.width,
-				height: this.height,
+				width: Math.max(1, Math.round(this.width * this.previewScale)),
+				height: Math.max(1, Math.round(this.height * this.previewScale)),
 			});
 		}
 		measureSpanSync({
@@ -79,7 +84,12 @@ export class CanvasRenderer {
 		});
 		measureSpanSync({
 			name: "renderFrame",
-			fn: () => wasmCompositor.render(frame, targetCtx),
+			fn: () =>
+				wasmCompositor.render(
+					frame,
+					targetCtx,
+					targetCtx ? 1 : this.previewScale,
+				),
 		});
 	}
 

@@ -182,9 +182,13 @@ class WasmCompositor {
 	render(
 		frame: FrameDescriptor,
 		targetCtx?: CanvasRenderingContext2D | null,
+		previewScale = 1,
 	) {
 		if (!targetCtx) {
-			this.ensureInitialized({ width: frame.width, height: frame.height });
+			this.ensureInitialized({
+				width: Math.max(1, Math.round(frame.width * previewScale)),
+				height: Math.max(1, Math.round(frame.height * previewScale)),
+			});
 		}
 		const activeCtx = targetCtx ?? this.outputCtx;
 
@@ -228,14 +232,17 @@ class WasmCompositor {
 			);
 		}
 		if (activeCtx && this.wasmCanvas) {
-			activeCtx.clearRect(0, 0, frame.width, frame.height);
-			activeCtx.drawImage(
-				this.wasmCanvas,
+			activeCtx.save();
+			activeCtx.setTransform(
+				activeCtx.canvas.width / frame.width,
 				0,
 				0,
-				frame.width,
-				frame.height,
+				activeCtx.canvas.height / frame.height,
+				0,
+				0,
 			);
+			activeCtx.clearRect(0, 0, frame.width, frame.height);
+			activeCtx.drawImage(this.wasmCanvas, 0, 0, frame.width, frame.height);
 			for (const item of frame.items) {
 				if (item.type === "layer" && item.transitionFx) {
 					drawTransitionPostOverlay2D({
@@ -247,6 +254,7 @@ class WasmCompositor {
 					});
 				}
 			}
+			activeCtx.restore();
 		}
 	}
 
@@ -257,7 +265,14 @@ class WasmCompositor {
 		const { width, height } = frame;
 		const [r, g, b, a] = frame.clear.color;
 		ctx.save();
-		ctx.setTransform(1, 0, 0, 1, 0, 0);
+		ctx.setTransform(
+			ctx.canvas.width / width,
+			0,
+			0,
+			ctx.canvas.height / height,
+			0,
+			0,
+		);
 		ctx.globalAlpha = 1;
 		ctx.globalCompositeOperation = "source-over";
 
@@ -441,9 +456,7 @@ function drawLayer2D({
 	const requiresMatrix =
 		transform.rotationDegrees !== 0 || flipX !== 1 || flipY !== 1;
 	const baseAlpha = Math.max(0, Math.min(1, opacity));
-	const p = transitionFx
-		? Math.max(0, Math.min(1, transitionFx.progress))
-		: 1;
+	const p = transitionFx ? Math.max(0, Math.min(1, transitionFx.progress)) : 1;
 	const intensity = 1 - p;
 
 	ctx.save();
@@ -541,7 +554,10 @@ function drawLayer2D({
 			const normY = (b + 0.5) / bandCount;
 			const sliceFracH = 0.06 + (b % 3) * 0.035;
 			const sy = Math.max(0, (normY - sliceFracH / 2) * sourceHeight);
-			const sh = Math.max(2, Math.min(sourceHeight - sy, sliceFracH * sourceHeight));
+			const sh = Math.max(
+				2,
+				Math.min(sourceHeight - sy, sliceFracH * sourceHeight),
+			);
 			const dy = y + (sy / Math.max(1, sourceHeight)) * transform.height;
 			const dh = (sh / Math.max(1, sourceHeight)) * transform.height;
 			const offsetX =
@@ -651,7 +667,7 @@ function applyGeometricTransitionClip({
 			for (let i = 0; i < slats; i++) {
 				const stagger = Math.min(
 					1,
-					Math.max(0, (smoothP * 1.25 - (i / slats) * 0.25)),
+					Math.max(0, smoothP * 1.25 - (i / slats) * 0.25),
 				);
 				const openH = slatH * stagger;
 				const sy = top + i * slatH + (slatH - openH) * 0.5;
@@ -752,7 +768,14 @@ function drawTransitionPostOverlay2D({
 			const driftX = canvasWidth * (0.18 + 0.64 * p);
 			const driftY = canvasHeight * (0.28 + 0.35 * Math.sin(p * Math.PI));
 			const r1 = Math.max(canvasWidth, canvasHeight) * 0.72;
-			const g1 = ctx.createRadialGradient(driftX, driftY, 0, driftX, driftY, r1);
+			const g1 = ctx.createRadialGradient(
+				driftX,
+				driftY,
+				0,
+				driftX,
+				driftY,
+				r1,
+			);
 			g1.addColorStop(0, `rgba(255, 215, 110, ${intensity * 0.88})`);
 			g1.addColorStop(0.42, `rgba(251, 146, 60, ${intensity * 0.65})`);
 			g1.addColorStop(0.75, `rgba(244, 63, 94, ${intensity * 0.32})`);
