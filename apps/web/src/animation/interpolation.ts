@@ -117,7 +117,9 @@ export function normalizeScalarChannel({
 }: {
 	channel: ScalarAnimationChannel;
 }): ScalarAnimationChannel {
-	const sortedKeys = [...channel.keys]
+	// At one timestamp the latest edit wins, including the first frame.
+	const uniqueKeys = new Map(channel.keys.map((key) => [key.time, key]));
+	const sortedKeys = [...uniqueKeys.values()]
 		.map((key) => normalizeScalarKey({ key }))
 		.sort((leftKey, rightKey) =>
 			byTimeAscending({
