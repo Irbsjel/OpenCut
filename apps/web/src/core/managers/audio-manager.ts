@@ -150,7 +150,7 @@ export class AudioManager {
 		if (!audioContext) return;
 
 		this.stopPlayback();
-		this.playbackSessionId++;
+		const sessionId = this.playbackSessionId;
 		this.playbackLatencyCompensationSeconds = 0;
 
 		const tracks = this.editor.scenes.getActiveScene().tracks;
@@ -163,8 +163,14 @@ export class AudioManager {
 			await audioContext.resume();
 		}
 
-		this.clips = await collectAudioClips({ tracks, mediaAssets });
-		if (!this.editor.playback.getIsPlaying()) return;
+		if (sessionId !== this.playbackSessionId) return;
+		const clips = await collectAudioClips({ tracks, mediaAssets });
+		if (
+			sessionId !== this.playbackSessionId ||
+			!this.editor.playback.getIsPlaying()
+		)
+			return;
+		this.clips = clips;
 
 		this.playbackStartTime = time;
 		this.playbackStartContextTime = audioContext.currentTime;
@@ -210,6 +216,8 @@ export class AudioManager {
 	}
 
 	private stopPlayback(): void {
+		// Invalidate pending resume/decode work before stopping scheduled sources.
+		this.playbackSessionId++;
 		if (this.scheduleTimer && typeof window !== "undefined") {
 			window.clearInterval(this.scheduleTimer);
 		}
@@ -399,10 +407,7 @@ export class AudioManager {
 			actualClipOffset = clipOffset + lateOffset;
 		}
 
-		const remainingClipDuration = Math.max(
-			0,
-			clip.duration - actualClipOffset,
-		);
+		const remainingClipDuration = Math.max(0, clip.duration - actualClipOffset);
 		if (remainingClipDuration <= 0.005) {
 			return;
 		}

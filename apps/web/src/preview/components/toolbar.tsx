@@ -498,7 +498,9 @@ const FORMAT_PRESETS = [
 
 function FormatSelect() {
 	const editor = useEditor();
-	const canvasSize = useEditor((e) => e.project.getActive().settings.canvasSize);
+	const canvasSize = useEditor(
+		(e) => e.project.getActive().settings.canvasSize,
+	);
 	const canvasFitMode = useEditor(
 		(e) => e.project.getActive().settings.canvasFitMode ?? "contain",
 	);
@@ -660,6 +662,7 @@ function PlayPauseButton() {
 
 	return (
 		<Button
+			aria-label={isPlaying ? "Pausar" : "Reproducir"}
 			variant="text"
 			size="icon"
 			onClick={() => invokeAction("toggle-play")}

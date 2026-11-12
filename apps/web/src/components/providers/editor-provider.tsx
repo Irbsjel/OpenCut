@@ -147,6 +147,20 @@ function EditorRuntimeBindings() {
 	}, [editor, rippleEditingEnabled]);
 
 	useEffect(() => {
+		const pause = () => editor.playback.pause();
+		const onVisibilityChange = () => {
+			if (document.hidden) pause();
+		};
+		document.addEventListener("visibilitychange", onVisibilityChange);
+		window.addEventListener("pagehide", pause);
+		return () => {
+			pause();
+			document.removeEventListener("visibilitychange", onVisibilityChange);
+			window.removeEventListener("pagehide", pause);
+		};
+	}, [editor]);
+
+	useEffect(() => {
 		const handleBeforeUnload = (event: BeforeUnloadEvent) => {
 			if (!editor.save.getIsDirty()) return;
 			event.preventDefault();
@@ -238,7 +252,12 @@ function EditorRuntimeBindings() {
 
 			// Heal project canvasSize if it was stuck on a default/fallback landscape size (1280x720 or 1920x1080)
 			// while the primary timeline video asset is actually vertical (and the user hasn't manually picked a format).
-			if (detail.width && detail.height && detail.width > 0 && detail.height > 0) {
+			if (
+				detail.width &&
+				detail.height &&
+				detail.width > 0 &&
+				detail.height > 0
+			) {
 				const activeProj = editor.project.getActiveOrNull();
 				if (
 					activeProj &&
@@ -376,7 +395,9 @@ function EditorRuntimeBindings() {
 				};
 			});
 
-			let nextMainElements = healTrackElements(activeScene.tracks.main.elements);
+			let nextMainElements = healTrackElements(
+				activeScene.tracks.main.elements,
+			);
 
 			if (
 				tracksChanged &&

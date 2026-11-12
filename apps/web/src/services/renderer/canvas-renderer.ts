@@ -23,9 +23,11 @@ export class CanvasRenderer {
 	height: number;
 	fps: FrameRate;
 	private previewScale = 1;
+	isPreview = false;
 
 	setPreviewScale(scale: number): void {
 		this.previewScale = Math.max(0.01, Math.min(1, scale));
+		this.isPreview = true;
 	}
 
 	constructor({ width, height, fps }: CanvasRendererParams) {

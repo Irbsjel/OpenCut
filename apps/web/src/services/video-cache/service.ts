@@ -26,11 +26,15 @@ const MAX_ACTIVE_EXPORT_DECODERS = 4;
 
 let nextFrameRevision = 1;
 function stampCanvasRevision(
-	canvas: HTMLCanvasElement | OffscreenCanvas,
+	canvas: HTMLCanvasElement | OffscreenCanvas | HTMLVideoElement,
 ): void {
 	(canvas as unknown as { __frameRevision?: number }).__frameRevision =
 		++nextFrameRevision;
 }
+
+export type PreviewVideoFrame = Omit<WrappedCanvas, "canvas"> & {
+	canvas: HTMLCanvasElement | OffscreenCanvas | HTMLVideoElement;
+};
 
 export interface DiscoveredVideoMetadata {
 	mediaId: string;
@@ -445,15 +449,28 @@ export class VideoCache {
 		}
 	}
 
+	getFrameAt(params: {
+		mediaId: string;
+		file: File;
+		time: number;
+	}): Promise<WrappedCanvas | null>;
+	getFrameAt(params: {
+		mediaId: string;
+		file: File;
+		time: number;
+		directPreview: boolean;
+	}): Promise<PreviewVideoFrame | null>;
 	async getFrameAt({
 		mediaId,
 		file,
 		time,
+		directPreview = false,
 	}: {
 		mediaId: string;
 		file: File;
 		time: number;
-	}): Promise<WrappedCanvas | null> {
+		directPreview?: boolean;
+	}): Promise<PreviewVideoFrame | null> {
 		await this.ensureSink({ mediaId, file });
 
 		const sinkData = this.sinks.get(mediaId);
@@ -546,6 +563,23 @@ export class VideoCache {
 					if (Math.abs(v.playbackRate - desiredRate) > 0.03) {
 						v.playbackRate = desiredRate;
 					}
+				}
+
+				if (directPreview && this.playbackActive) {
+					// Sample the live native decoder directly in the compositor. The
+					// intermediate video -> canvas copy dominates CPU on older machines.
+					this.syncSinkDimensionsFromVideo(sinkData, v);
+					if (v.width !== sinkData.targetWidth) v.width = sinkData.targetWidth;
+					if (v.height !== sinkData.targetHeight)
+						v.height = sinkData.targetHeight;
+					if (!sinkData.metadataDispatched)
+						this.emitIntrinsicMetadataIfNeeded(sinkData);
+					stampCanvasRevision(v);
+					return {
+						canvas: v,
+						timestamp: clampedTime,
+						duration: sinkData.frameStep,
+					};
 				}
 
 				const liveFrame = this.drawSlotFrame(
