@@ -272,68 +272,8 @@ function enrichBundleMetadata(bundle: CloudProjectBundle): CloudProjectBundle {
 			}
 		}
 
-		// Anti-saturation rule: remove or trim subtitle cues that overlap exemplifying overlay images/stickers
-		const imageWindows: Array<{ startTicks: number; endTicks: number }> = [];
-		for (const track of tracks.overlay ?? []) {
-			if ((track as { hidden?: boolean }).hidden) continue;
-			for (const el of track.elements ?? []) {
-				if ((el as { hidden?: boolean }).hidden) continue;
-				if (el.type === "image" || el.type === "sticker") {
-					const st = Number(el.startTime ?? 0);
-					const dur = Number(el.duration ?? 0);
-					if (dur > 6000) {
-						imageWindows.push({ startTicks: st, endTicks: st + dur });
-					}
-				}
-			}
-		}
-		if (imageWindows.length > 0) {
-			imageWindows.sort((a, b) => a.startTicks - b.startTicks);
-			for (const track of tracks.overlay ?? []) {
-				if (track.type !== "text" || !Array.isArray(track.elements)) continue;
-				const nextElements = [];
-				for (const el of track.elements) {
-					const params = (el as { params?: Record<string, unknown> }).params;
-					const isSub =
-						params?.isSubtitle === true ||
-						(typeof el.name === "string" && el.name.startsWith("Subtítulo"));
-					if (!isSub) {
-						nextElements.push(el);
-						continue;
-					}
-					let startTicks = Number(el.startTime ?? 0);
-					let endTicks = startTicks + Number(el.duration ?? 0);
-					let drop = false;
-					for (const win of imageWindows) {
-						const ovStart = Math.max(startTicks, win.startTicks);
-						const ovEnd = Math.min(endTicks, win.endTicks);
-						const ov = ovEnd - ovStart;
-						if (ov <= 6000) continue; // <= 50ms
-						const beforeRem = win.startTicks - startTicks;
-						const afterRem = endTicks - win.endTicks;
-						const curDur = endTicks - startTicks;
-						if (
-							beforeRem >= 66_000 &&
-							beforeRem >= afterRem &&
-							ov < curDur * 0.55
-						) {
-							endTicks = win.startTicks - 2400;
-						} else if (afterRem >= 66_000 && ov < curDur * 0.55) {
-							startTicks = win.endTicks + 2400;
-						} else {
-							drop = true;
-							break;
-						}
-					}
-					if (!drop && endTicks - startTicks >= 36_000) {
-						el.startTime = Math.round(startTicks);
-						el.duration = Math.round(endTicks - startTicks);
-						nextElements.push(el);
-					}
-				}
-				track.elements = nextElements;
-			}
-		}
+		// Image/subtitle exclusion is a render-time visibility rule. Never trim,
+		// shift or delete saved cues: karaoke offsets are relative to their start.
 	}
 
 	const primaryVideo =

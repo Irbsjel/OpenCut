@@ -56,7 +56,7 @@ type ResolveContext = {
 	hasActiveExemplifyingOverlay?: boolean;
 };
 
-function hasActiveExemplifyingOverlayAtTime(
+export function hasActiveExemplifyingOverlayAtTime(
 	rootNode: AnyBaseNode,
 	time: number,
 ): boolean {
@@ -433,7 +433,8 @@ function resolveTextNode({
 	const isSubtitleNode =
 		node.params.params?.isSubtitle === true ||
 		(typeof node.params.name === "string" &&
-			node.params.name.startsWith("Subtítulo"));
+			(node.params.name.startsWith("Subtítulo") ||
+				node.params.name.startsWith("Caption")));
 	if (isSubtitleNode && context.hasActiveExemplifyingOverlay) {
 		return null;
 	}
