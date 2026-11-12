@@ -262,8 +262,10 @@ function ExportPopover() {
 		setSaveError(null);
 		setIsSaving(true);
 		let stream: FileSystemWritableFileStream | undefined;
+		let destinationChosen = false;
 		try {
 			const handle = await chooseExportDestination({ filename, format });
+			destinationChosen = true;
 			const scratchFile = handle
 				? null
 				: await createExportScratchFile(latestProject.metadata.id);
@@ -324,7 +326,7 @@ function ExportPopover() {
 				editor.project.clearExportState();
 			}
 		} catch (error) {
-			if (!(error instanceof DOMException && error.name === "AbortError")) {
+			if (destinationChosen || !(error instanceof DOMException && error.name === "AbortError")) {
 				setSaveError(
 					error instanceof Error
 						? error.message

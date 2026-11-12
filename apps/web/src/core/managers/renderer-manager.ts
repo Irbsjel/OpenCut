@@ -195,19 +195,7 @@ export class RendererManager {
 			let audioBuffer: AudioBuffer | null = null;
 			if (includeAudio) {
 				onProgress?.({ progress: 0.05 });
-				try {
-					audioBuffer = await createTimelineAudioBuffer({
-						tracks,
-						mediaAssets,
-						duration,
-					});
-				} catch (audioError) {
-					console.warn(
-						"Audio mix generation failed, continuing video export without audio:",
-						audioError,
-					);
-					audioBuffer = null;
-				}
+				audioBuffer = await createTimelineAudioBuffer({ tracks, mediaAssets, duration });
 			}
 
 			const scene = buildScene({

@@ -1,3 +1,4 @@
+import { waitForExportStep } from "@/export/wait-for-step";
 import type {
 	AudioElement,
 	VideoElement,
@@ -308,6 +309,18 @@ async function resolveAudioBufferForAsset({
 	asset: MediaAsset;
 	audioContext: AudioContext;
 }): Promise<AudioBuffer | null> {
+	// A narration must never disappear merely because decoding is slow.
+	if (asset.type === "audio") {
+		const bytes = await readAssetArrayBuffer(asset);
+		if (!bytes?.byteLength) throw new Error(`No se pudo leer la pista de audio: ${asset.name}`);
+		try {
+			return await waitForExportStep(() => audioContext.decodeAudioData(bytes.slice(0)), {
+				label: `Decodificar audio ${asset.name}`, timeoutMs: 120_000,
+			});
+		} catch (error) {
+			throw new Error(`No se pudo preparar ${asset.name}: ${String(error)}`);
+		}
+	}
 	// 1. Fast native browser C++ FFmpeg decode path (works for both audio and video containers in ~20ms)
 	try {
 		const arrayBuffer = await readAssetArrayBuffer(asset);
@@ -322,14 +335,8 @@ async function resolveAudioBufferForAsset({
 		}
 	} catch {
 		// If the video container has no audio stream or native decodeAudioData rejected, return null fast for video
-		if (asset.type === "audio") {
-			return null;
-		}
 	}
 
-	if (asset.type === "audio") {
-		return null;
-	}
 
 	// 2. Bounded fallback via mediabunny (with strict 3.5s timeout so it can never hang export)
 	const input = new Input({

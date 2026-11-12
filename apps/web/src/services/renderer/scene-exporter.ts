@@ -286,12 +286,12 @@ export class SceneExporter extends EventEmitter<SceneExporterEvents> {
 					output.addAudioTrack(audioSource);
 				}
 			} catch (audioTrackErr) {
-				console.warn(
-					"Skipping audio track due to encoder config error:",
-					audioTrackErr,
-				);
-				audioSource = null;
+				throw new Error(`No se pudo configurar el audio: ${String(audioTrackErr)}`);
 			}
+		}
+
+		if (this.shouldIncludeAudio && this.audioBuffer && !audioSource) {
+			throw new Error("El navegador no dispone de un codificador de audio compatible.");
 		}
 
 		let finalized = false;
