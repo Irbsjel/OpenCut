@@ -6,6 +6,7 @@ import {
 	Mp4OutputFormat,
 	WebMOutputFormat,
 	BufferTarget,
+	StreamTarget,
 	CanvasSource,
 	AudioBufferSource,
 	QUALITY_LOW,
@@ -30,6 +31,7 @@ type ExportParams = {
 	quality: ExportQuality;
 	shouldIncludeAudio?: boolean;
 	audioBuffer?: AudioBuffer;
+	fileStream?: FileSystemWritableFileStream;
 };
 
 const qualityMap = {
@@ -52,6 +54,7 @@ export class SceneExporter extends EventEmitter<SceneExporterEvents> {
 	private quality: ExportQuality;
 	private shouldIncludeAudio: boolean;
 	private audioBuffer?: AudioBuffer;
+	private fileStream?: FileSystemWritableFileStream;
 
 	private isCancelled = false;
 
@@ -63,6 +66,7 @@ export class SceneExporter extends EventEmitter<SceneExporterEvents> {
 		quality,
 		shouldIncludeAudio,
 		audioBuffer,
+		fileStream,
 	}: ExportParams) {
 		super();
 		this.renderer = new CanvasRenderer({
@@ -75,6 +79,7 @@ export class SceneExporter extends EventEmitter<SceneExporterEvents> {
 		this.quality = quality;
 		this.shouldIncludeAudio = shouldIncludeAudio ?? false;
 		this.audioBuffer = audioBuffer;
+		this.fileStream = fileStream;
 	}
 
 	cancel(): void {
@@ -85,7 +90,7 @@ export class SceneExporter extends EventEmitter<SceneExporterEvents> {
 		rootNode,
 	}: {
 		rootNode: RootNode;
-	}): Promise<ArrayBuffer | null> {
+	}): Promise<ArrayBuffer | true | null> {
 		const fps = this.renderer.fps;
 		const fpsFloat = frameRateToFloat(fps);
 		const ticksPerFrame = Math.round(
@@ -194,12 +199,22 @@ export class SceneExporter extends EventEmitter<SceneExporterEvents> {
 		exportCanvas.height = exportHeight;
 
 		const outputFormat =
-			this.format === "webm" ? new WebMOutputFormat() : new Mp4OutputFormat();
+			this.format === "webm"
+				? new WebMOutputFormat()
+				: new Mp4OutputFormat(this.fileStream ? { fastStart: false } : {});
 
-		const output = new Output({
-			format: outputFormat,
-			target: new BufferTarget(),
-		});
+		const fileStream = this.fileStream;
+		// Output.cancel() also closes its target. Keep the native file transaction
+		// open until the caller confirms success, so cancellation never commits a partial video.
+		const target = fileStream
+			? new StreamTarget(
+					new WritableStream({
+						write: (chunk) => fileStream.write(chunk),
+					}),
+					{ chunked: true, chunkSize: 1024 * 1024 },
+				)
+			: new BufferTarget();
+		const output = new Output({ format: outputFormat, target });
 
 		const videoSource = new CanvasSource(exportCanvas, {
 			codec: this.format === "webm" ? "vp8" : "avc",
@@ -341,7 +356,9 @@ export class SceneExporter extends EventEmitter<SceneExporterEvents> {
 			finalized = true;
 			this.emit("progress", 1);
 
-			const buffer = output.target.buffer;
+			if (fileStream) return true;
+
+			const buffer = (target as BufferTarget).buffer;
 			if (!buffer) {
 				this.emit("error", new Error("Failed to export video"));
 				return null;

@@ -17,6 +17,8 @@ export type ExportQuality = (typeof EXPORT_QUALITY_VALUES)[number];
 export interface ExportOptions {
 	format: ExportFormat;
 	quality: ExportQuality;
+	/** Chosen by the user before rendering; committed only after successful export. */
+	fileStream?: FileSystemWritableFileStream;
 	fps?: FrameRate;
 	includeAudio?: boolean;
 	canvasSize?: { width: number; height: number };
@@ -26,6 +28,7 @@ export interface ExportOptions {
 export interface ExportResult {
 	success: boolean;
 	buffer?: ArrayBuffer;
+	savedToFile?: boolean;
 	error?: string;
 	cancelled?: boolean;
 }

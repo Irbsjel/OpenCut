@@ -2,6 +2,11 @@
 
 import { useEffect, useState } from "react";
 import {
+	chooseExportDestination,
+	createExportScratchFile,
+} from "@/export/save-destination";
+import { downloadBlob } from "@/utils/browser";
+import {
 	loadCompletedExport,
 	saveCompletedExport,
 	type CompletedExport,
@@ -162,6 +167,8 @@ function ExportPopover() {
 	const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
 	const [recoveryError, setRecoveryError] = useState(false);
 	const [isSaving, setIsSaving] = useState(false);
+	const [saveError, setSaveError] = useState<string | null>(null);
+	const [savedFilename, setSavedFilename] = useState<string | null>(null);
 	const projectId = activeProject.metadata.id;
 	useEffect(() => {
 		let active = true;
@@ -251,41 +258,82 @@ function ExportPopover() {
 		const exportCanvasSize = latestProject.settings.canvasSize;
 		const exportFitMode = latestProject.settings.canvasFitMode ?? "contain";
 
-		const result = await editor.project.export({
-			options: {
-				format,
-				quality,
-				fps: latestProject.settings.fps,
-				includeAudio: shouldIncludeAudio,
-				canvasSize: exportCanvasSize,
-				fitMode: exportFitMode,
-			},
-		});
-
-		if (result.cancelled) {
-			editor.project.clearExportState();
-			return;
-		}
-
-		if (result.success && result.buffer) {
-			const record: CompletedExport = {
-				projectId: latestProject.metadata.id,
-				filename: `${latestProject.metadata.name}${getExportFileExtension({ format })}`,
-				blob: new Blob([result.buffer], {
-					type: getExportMimeType({ format }),
-				}),
-				createdAt: Date.now(),
-			};
-			setCompleted(record);
-			setRecoveryError(false);
-			setIsSaving(true);
-			// Keep the finished file available even if Brave blocks an automatic download.
-			try {
-				await saveCompletedExport(record);
-			} catch {
-				setRecoveryError(true);
+		const filename = `${latestProject.metadata.name}${getExportFileExtension({ format })}`;
+		setSaveError(null);
+		setIsSaving(true);
+		let stream: FileSystemWritableFileStream | undefined;
+		try {
+			const handle = await chooseExportDestination({ filename, format });
+			const scratchFile = handle
+				? null
+				: await createExportScratchFile(latestProject.metadata.id);
+			if (handle) stream = await handle.createWritable();
+			else stream = scratchFile?.stream;
+			setSavedFilename(null);
+			setIsSaving(false);
+			const result = await editor.project.export({
+				options: {
+					format,
+					quality,
+					fps: latestProject.settings.fps,
+					includeAudio: shouldIncludeAudio,
+					canvasSize: exportCanvasSize,
+					fitMode: exportFitMode,
+					fileStream: stream,
+				},
+			});
+			if (result.cancelled) {
+				editor.project.clearExportState();
+				return;
 			}
-			editor.project.clearExportState();
+			if (result.success && result.savedToFile && stream) {
+				setIsSaving(true);
+				await stream.close();
+				stream = undefined;
+				if (handle) {
+					setSavedFilename(handle.name);
+					setCompleted(null);
+					editor.project.clearExportState();
+					// The chosen file is already durable. Do not copy it again into IndexedDB.
+					return;
+				}
+			}
+			const blob =
+				result.success && result.savedToFile && scratchFile
+					? await scratchFile.handle.getFile()
+					: result.buffer
+						? new Blob([result.buffer], { type: getExportMimeType({ format }) })
+						: null;
+			if (result.success && blob) {
+				const record: CompletedExport = {
+					projectId: latestProject.metadata.id,
+					filename,
+					blob,
+					createdAt: Date.now(),
+				};
+				setCompleted(record);
+				setRecoveryError(false);
+				// Browsers without the picker still download automatically; the link is a retry.
+				downloadBlob({ blob: record.blob, filename });
+				setIsSaving(true);
+				try {
+					await saveCompletedExport(record);
+				} catch {
+					setRecoveryError(true);
+				}
+				editor.project.clearExportState();
+			}
+		} catch (error) {
+			if (!(error instanceof DOMException && error.name === "AbortError")) {
+				setSaveError(
+					error instanceof Error
+						? error.message
+						: "No se pudo guardar el video.",
+				);
+			}
+		} finally {
+			// Native writes are transactional: discard everything on errors or cancellation.
+			if (stream) await stream.abort().catch(() => {});
 			setIsSaving(false);
 		}
 	};
@@ -343,6 +391,20 @@ function ExportPopover() {
 					</div>
 
 					<div className="flex flex-col gap-3">
+						{saveError && (
+							<p role="alert" className="mx-3 mt-3 text-sm text-destructive">
+								{saveError}
+							</p>
+						)}
+						{!isExporting && savedFilename && (
+							<div
+								role="status"
+								className="mx-3 mt-3 rounded-md border border-green-500/40 p-3 text-sm"
+							>
+								Video guardado:{" "}
+								<span className="break-all">{savedFilename}</span>
+							</div>
+						)}
 						{!isExporting && completed && downloadUrl && (
 							<div className="mx-3 mt-3 space-y-2 rounded-md border border-green-500/40 p-3">
 								<p className="text-sm font-medium">
@@ -557,7 +619,7 @@ function ExportPopover() {
 										className="w-full gap-2"
 									>
 										<Download className="size-4" />
-										Export
+										{isSaving ? "Preparando archivo…" : "Export"}
 									</Button>
 								</div>
 							</>

@@ -122,7 +122,10 @@ export class RendererManager {
 				return { success: false, error: "Failed to create image" };
 			}
 
-			const timecode = formatTimecode({ time: renderTime, rate: fps })!.replace(/:/g, "-");
+			const timecode = formatTimecode({ time: renderTime, rate: fps })!.replace(
+				/:/g,
+				"-",
+			);
 			const safeName =
 				activeProject.metadata.name.replace(/[<>:"/\\|?*]/g, "-").trim() ||
 				"snapshot";
@@ -175,7 +178,8 @@ export class RendererManager {
 			}
 
 			const exportFps = fps ?? activeProject.settings.fps;
-			const canvasSize = overrideCanvasSize ?? activeProject.settings.canvasSize;
+			const canvasSize =
+				overrideCanvasSize ?? activeProject.settings.canvasSize;
 			const canvasFitMode =
 				overrideFitMode ?? activeProject.settings.canvasFitMode ?? "contain";
 
@@ -214,6 +218,7 @@ export class RendererManager {
 				quality,
 				shouldIncludeAudio: !!includeAudio,
 				audioBuffer: audioBuffer || undefined,
+				fileStream: options.fileStream,
 			});
 
 			exporter.on("progress", (progress) => {
@@ -247,7 +252,7 @@ export class RendererManager {
 
 				return {
 					success: true,
-					buffer,
+					...(buffer === true ? { savedToFile: true } : { buffer }),
 				};
 			} finally {
 				clearInterval(cancelInterval);
