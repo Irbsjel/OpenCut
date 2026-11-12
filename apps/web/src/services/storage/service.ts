@@ -789,7 +789,7 @@ class StorageService {
 			this.getProjectMediaAdapters({ projectId });
 
 		let [file, metadata] = await Promise.all([
-			mediaAssetsAdapter.get(id),
+			mediaAssetsAdapter.get(id).catch(() => null),
 			mediaMetadataAdapter.get(id),
 		]);
 
@@ -858,7 +858,9 @@ class StorageService {
 								? "image/webp"
 								: "image/png";
 			const resolvedMime =
-				file.type && file.type.length > 0 ? file.type : defaultMime;
+				file.type && file.type !== "application/octet-stream"
+					? file.type
+					: defaultMime;
 			if (file.type !== resolvedMime || file.name !== (metadata.name || id)) {
 				file = new File(
 					[file.slice(0, file.size, resolvedMime)],

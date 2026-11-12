@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { createReadStream } from "node:fs";
+import { Readable } from "node:stream";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -51,21 +53,46 @@ export async function HEAD(
 }
 
 export async function GET(
-	_req: NextRequest,
+	req: NextRequest,
 	context: { params: Promise<{ projectId: string; mediaId: string }> },
 ) {
 	try {
 		const { mediaId } = await context.params;
 		const safeMediaId = sanitizeId(mediaId);
+		if (!safeMediaId) return new NextResponse(null, { status: 400 });
 		const filePath = path.join(getMediaPoolDir(), safeMediaId);
-		const data = await fs.readFile(filePath);
-		return new NextResponse(data, {
-			status: 200,
-			headers: {
-				"Content-Type": "application/octet-stream",
-				"Content-Length": String(data.byteLength),
-				"Cache-Control": "public, max-age=31536000, immutable",
-			},
+		const stat = await fs.stat(filePath);
+		if (!stat.isFile()) return new NextResponse(null, { status: 404 });
+		const headers: Record<string, string> = {
+			"Content-Type": "application/octet-stream",
+			"Accept-Ranges": "bytes",
+			"Cache-Control": "public, max-age=31536000, immutable",
+		};
+		let start = 0;
+		let end = stat.size - 1;
+		const range = req.headers.get("range");
+		if (range) {
+			const match = /^bytes=(\d*)-(\d*)$/.exec(range);
+			if (!match || (!match[1] && !match[2]) || stat.size === 0) {
+				return new NextResponse(null, { status: 416, headers: { "Content-Range": `bytes */${stat.size}` } });
+			}
+			if (!match[1]) {
+				start = Math.max(0, stat.size - Number(match[2]));
+			} else {
+				start = Number(match[1]);
+				if (match[2]) end = Math.min(end, Number(match[2]));
+			}
+			if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start > end || start >= stat.size) {
+				return new NextResponse(null, { status: 416, headers: { "Content-Range": `bytes */${stat.size}` } });
+			}
+			headers["Content-Range"] = `bytes ${start}-${end}/${stat.size}`;
+		}
+		headers["Content-Length"] = String(Math.max(0, end - start + 1));
+		if (stat.size === 0) return new NextResponse(null, { headers });
+		const stream = createReadStream(filePath, { start, end });
+		return new NextResponse(Readable.toWeb(stream) as ReadableStream<Uint8Array>, {
+			status: range ? 206 : 200,
+			headers,
 		});
 	} catch {
 		return NextResponse.json({ error: "Media not found" }, { status: 404 });
