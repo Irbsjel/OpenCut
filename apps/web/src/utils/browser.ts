@@ -12,7 +12,8 @@ export function downloadBlob({
 	document.body.appendChild(anchor);
 	anchor.click();
 	document.body.removeChild(anchor);
-	URL.revokeObjectURL(url);
+	// Allow Brave to consume the blob before releasing it.
+	setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
 export function findScrollParent({

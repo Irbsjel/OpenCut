@@ -1,4 +1,5 @@
 import EventEmitter from "eventemitter3";
+import { yieldToBrowser } from "@/export/yield-to-browser";
 
 import {
 	Output,
@@ -90,7 +91,10 @@ export class SceneExporter extends EventEmitter<SceneExporterEvents> {
 		const ticksPerFrame = Math.round(
 			(TICKS_PER_SECOND * fps.denominator) / fps.numerator,
 		);
-		const frameCount = Math.max(1, Math.floor(rootNode.duration / ticksPerFrame));
+		const frameCount = Math.max(
+			1,
+			Math.floor(rootNode.duration / ticksPerFrame),
+		);
 
 		let exportWidth = Math.max(2, Math.round(this.renderer.width / 2) * 2);
 		let exportHeight = Math.max(2, Math.round(this.renderer.height / 2) * 2);
@@ -131,7 +135,10 @@ export class SceneExporter extends EventEmitter<SceneExporterEvents> {
 									codec,
 									width: w,
 									height: h,
-									bitrate: targetBitrate,
+									bitrate: Math.max(
+										500_000,
+										Math.round(w * h * fpsFloat * 0.12),
+									),
 									framerate: fpsFloat,
 									hardwareAcceleration: hw,
 									latencyMode,
@@ -155,8 +162,14 @@ export class SceneExporter extends EventEmitter<SceneExporterEvents> {
 				// Fallback to 720p-equivalent (e.g. 720x1280 for 9:16 vertical) if the host H.264 encoder caps vertical height at 1280
 				const maxDim = 1280;
 				const scale = Math.min(1, maxDim / Math.max(exportWidth, exportHeight));
-				const fallbackW = Math.max(2, Math.round((exportWidth * scale) / 2) * 2);
-				const fallbackH = Math.max(2, Math.round((exportHeight * scale) / 2) * 2);
+				const fallbackW = Math.max(
+					2,
+					Math.round((exportWidth * scale) / 2) * 2,
+				);
+				const fallbackH = Math.max(
+					2,
+					Math.round((exportHeight * scale) / 2) * 2,
+				);
 				const fallbackMatch = await findSupportedCodec(fallbackW, fallbackH);
 				if (fallbackMatch) {
 					exportWidth = fallbackW;
@@ -246,34 +259,37 @@ export class SceneExporter extends EventEmitter<SceneExporterEvents> {
 					output.addAudioTrack(audioSource);
 				}
 			} catch (audioTrackErr) {
-				console.warn("Skipping audio track due to encoder config error:", audioTrackErr);
+				console.warn(
+					"Skipping audio track due to encoder config error:",
+					audioTrackErr,
+				);
 				audioSource = null;
 			}
 		}
 
-		await output.start();
+		let finalized = false;
+		try {
+			await output.start();
 
-		if (audioSource && this.audioBuffer) {
-			try {
-				await Promise.race([
-					audioSource.add(this.audioBuffer),
-					new Promise<void>((resolve) => setTimeout(resolve, 6000)),
-				]);
-			} catch (audioAddErr) {
-				console.warn("Audio encoding warning:", audioAddErr);
-			} finally {
+			if (audioSource && this.audioBuffer) {
 				try {
-					audioSource.close();
-				} catch {
-					// ignore
+					await audioSource.add(this.audioBuffer);
+				} catch (audioAddErr) {
+					throw new Error(
+						"No se pudo codificar el audio: " + String(audioAddErr),
+					);
+				} finally {
+					try {
+						audioSource.close();
+					} catch {
+						// ignore
+					}
 				}
 			}
-		}
 
-		await videoCache.waitForAllVideosHarvested(rootNode);
-		videoCache.setExportMode(true);
+			await videoCache.waitForAllVideosHarvested(rootNode);
+			videoCache.setExportMode(true);
 
-		try {
 			this.emit("progress", 0.01);
 			let lastEmittedProgress = 0.01;
 			let lastEmitWallMs =
@@ -296,7 +312,7 @@ export class SceneExporter extends EventEmitter<SceneExporterEvents> {
 				});
 				await videoSource.add(timeSeconds, 1 / fpsFloat);
 
-				const nextProgress = (i + 1) / frameCount;
+				const nextProgress = ((i + 1) / frameCount) * 0.98;
 				const nowWall =
 					typeof performance !== "undefined" ? performance.now() : Date.now();
 				if (
@@ -310,7 +326,7 @@ export class SceneExporter extends EventEmitter<SceneExporterEvents> {
 				}
 				if (nowWall - lastYieldWallMs >= 45) {
 					lastYieldWallMs = nowWall;
-					await new Promise<void>((resolve) => setTimeout(resolve, 0));
+					await yieldToBrowser();
 				}
 			}
 
@@ -322,6 +338,7 @@ export class SceneExporter extends EventEmitter<SceneExporterEvents> {
 
 			videoSource.close();
 			await output.finalize();
+			finalized = true;
 			this.emit("progress", 1);
 
 			const buffer = output.target.buffer;
@@ -333,6 +350,7 @@ export class SceneExporter extends EventEmitter<SceneExporterEvents> {
 			this.emit("complete", buffer);
 			return buffer;
 		} finally {
+			if (!finalized) await output.cancel().catch(() => {});
 			videoCache.setExportMode(false);
 		}
 	}

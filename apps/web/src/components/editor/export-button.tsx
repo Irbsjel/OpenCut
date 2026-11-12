@@ -1,6 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import {
+	loadCompletedExport,
+	saveCompletedExport,
+	type CompletedExport,
+} from "@/export/completed-export";
 import { TransitionTopIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
@@ -64,6 +69,7 @@ export function ExportButton() {
 				setIsExportPopoverOpen(false);
 				return;
 			}
+			// Finished files live independently in the recovery cache.
 			editor.project.clearExportState();
 		}
 		setIsExportPopoverOpen(open);
@@ -103,7 +109,7 @@ export function ExportButton() {
 					</div>
 				</button>
 			</PopoverTrigger>
-			{hasProject && <ExportPopover onOpenChange={setIsExportPopoverOpen} />}
+			{hasProject && <ExportPopover />}
 		</Popover>
 	);
 }
@@ -139,11 +145,7 @@ function formatExportDuration(ms: number): string {
 	return `${m}:${String(s).padStart(2, "0")}`;
 }
 
-function ExportPopover({
-	onOpenChange,
-}: {
-	onOpenChange: (open: boolean) => void;
-}) {
+function ExportPopover() {
 	const editor = useEditor();
 	const activeProject = useEditor((e) => e.project.getActive());
 	const exportState = useEditor((e) => e.project.getExportState());
@@ -156,6 +158,36 @@ function ExportPopover({
 		elapsedMs = 0,
 	} = exportState;
 	const [confirmCancel, setConfirmCancel] = useState(false);
+	const [completed, setCompleted] = useState<CompletedExport | null>(null);
+	const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
+	const [recoveryError, setRecoveryError] = useState(false);
+	const [isSaving, setIsSaving] = useState(false);
+	const projectId = activeProject.metadata.id;
+	useEffect(() => {
+		let active = true;
+		setCompleted(null);
+		void loadCompletedExport({ projectId })
+			.then((record) => {
+				if (active && record)
+					setCompleted((current) =>
+						!current || record.createdAt > current.createdAt ? record : current,
+					);
+			})
+			.catch(() => {});
+		return () => {
+			active = false;
+		};
+	}, [projectId]);
+	useEffect(() => {
+		if (!completed) {
+			setDownloadUrl(null);
+			return;
+		}
+		const url = URL.createObjectURL(completed.blob);
+		setDownloadUrl(url);
+		return () => URL.revokeObjectURL(url);
+	}, [completed]);
+
 	const [format, setFormat] = useState<ExportFormat>(
 		DEFAULT_EXPORT_OPTIONS.format,
 	);
@@ -181,7 +213,9 @@ function ExportPopover({
 					? "1:1"
 					: "custom";
 
-	const handleSelectAspect = (preset: (typeof EXPORT_ASPECT_PRESETS)[number]) => {
+	const handleSelectAspect = (
+		preset: (typeof EXPORT_ASPECT_PRESETS)[number],
+	) => {
 		const isSwitchingToVertical = preset.id === "9:16";
 		editor.project.updateSettings({
 			settings: {
@@ -206,7 +240,12 @@ function ExportPopover({
 	};
 
 	const handleExport = async () => {
-		if (!activeProject) return;
+		if (
+			!activeProject ||
+			isSaving ||
+			editor.project.getExportState().isExporting
+		)
+			return;
 
 		const latestProject = editor.project.getActive();
 		const exportCanvasSize = latestProject.settings.canvasSize;
@@ -229,14 +268,25 @@ function ExportPopover({
 		}
 
 		if (result.success && result.buffer) {
-			downloadBuffer({
-				buffer: result.buffer,
+			const record: CompletedExport = {
+				projectId: latestProject.metadata.id,
 				filename: `${latestProject.metadata.name}${getExportFileExtension({ format })}`,
-				mimeType: getExportMimeType({ format }),
-			});
-
+				blob: new Blob([result.buffer], {
+					type: getExportMimeType({ format }),
+				}),
+				createdAt: Date.now(),
+			};
+			setCompleted(record);
+			setRecoveryError(false);
+			setIsSaving(true);
+			// Keep the finished file available even if Brave blocks an automatic download.
+			try {
+				await saveCompletedExport(record);
+			} catch {
+				setRecoveryError(true);
+			}
 			editor.project.clearExportState();
-			onOpenChange(false);
+			setIsSaving(false);
 		}
 	};
 
@@ -293,6 +343,30 @@ function ExportPopover({
 					</div>
 
 					<div className="flex flex-col gap-3">
+						{!isExporting && completed && downloadUrl && (
+							<div className="mx-3 mt-3 space-y-2 rounded-md border border-green-500/40 p-3">
+								<p className="text-sm font-medium">
+									Video listo para descargar
+								</p>
+								<p className="break-all text-xs text-muted-foreground">
+									{completed.filename}
+								</p>
+								<Button asChild className="w-full">
+									<a href={downloadUrl} download={completed.filename}>
+										Descargar video
+									</a>
+								</Button>
+								<p className="text-xs text-muted-foreground">
+									Puedes descargarlo otra vez sin volver a exportar.
+								</p>
+								{recoveryError && (
+									<p className="text-xs text-destructive">
+										No se pudo guardar la copia de recuperación. Descárgalo
+										antes de cerrar esta pestaña.
+									</p>
+								)}
+							</div>
+						)}
 						{!isExporting && (
 							<>
 								<div className="flex flex-col px-3 pt-3 gap-2.5">
@@ -477,7 +551,11 @@ function ExportPopover({
 								</div>
 
 								<div className="p-3 pt-0">
-									<Button onClick={handleExport} className="w-full gap-2">
+									<Button
+										onClick={handleExport}
+										disabled={isSaving}
+										className="w-full gap-2"
+									>
 										<Download className="size-4" />
 										Export
 									</Button>
@@ -490,7 +568,9 @@ function ExportPopover({
 								<div className="flex flex-col gap-2">
 									<div className="flex items-center justify-between text-center">
 										<p className="text-muted-foreground text-sm font-medium">
-											{Math.round(progress * 100)}%
+											{progress >= 0.98
+												? "Finalizando archivo…"
+												: `${Math.round(progress * 100)}%`}
 										</p>
 										{totalFrames > 0 ? (
 											<p className="text-muted-foreground font-mono text-xs">
