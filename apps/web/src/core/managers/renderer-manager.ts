@@ -1,3 +1,4 @@
+import { withExclusiveExport } from "@/export/exclusive-export";
 import type { EditorCore } from "@/core";
 import type { RootNode } from "@/services/renderer/nodes/root-node";
 import type { ExportOptions, ExportResult } from "@/export";
@@ -141,7 +142,15 @@ export class RendererManager {
 		}
 	}
 
-	async exportProject({
+	async exportProject(params: {
+		options: ExportOptions;
+		onProgress?: ({ progress }: { progress: number }) => void;
+		onCancel?: () => boolean;
+	}): Promise<ExportResult> {
+		return withExclusiveExport(() => this.performExportProject(params));
+	}
+
+	private async performExportProject({
 		options,
 		onProgress,
 		onCancel,

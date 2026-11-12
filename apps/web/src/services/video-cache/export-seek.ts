@@ -3,18 +3,28 @@ export async function seekExportVideo({
 	video,
 	time,
 	timeoutMs = 10_000,
+	signal,
 }: {
 	video: HTMLVideoElement;
 	time: number;
 	timeoutMs?: number;
+	signal?: AbortSignal;
 }): Promise<void> {
 	await new Promise<void>((resolve, reject) => {
 		let requested = false;
 		const cleanup = () => {
+			signal?.removeEventListener("abort", abort);
 			clearTimeout(timer);
 			for (const event of ["loadedmetadata", "loadeddata", "canplay", "seeked"])
 				video.removeEventListener(event, check);
 			video.removeEventListener("error", fail);
+		};
+		const abort = () => {
+			cleanup();
+			reject(
+				signal?.reason ??
+					new DOMException("Exportación cancelada", "AbortError"),
+			);
 		};
 		const fail = () => {
 			cleanup();
@@ -60,6 +70,11 @@ export async function seekExportVideo({
 				),
 			);
 		}, timeoutMs);
+		if (signal?.aborted) {
+			abort();
+			return;
+		}
+		signal?.addEventListener("abort", abort, { once: true });
 		for (const event of ["loadedmetadata", "loadeddata", "canplay", "seeked"])
 			video.addEventListener(event, check);
 		video.addEventListener("error", fail);

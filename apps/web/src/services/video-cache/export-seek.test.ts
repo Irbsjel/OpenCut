@@ -48,3 +48,15 @@ test("source decoding failure is surfaced", async () => {
 	v.dispatchEvent(new Event("error"));
 	await expect(waiting).rejects.toThrow("Invalid NAL");
 });
+
+test("cancelling a pending native seek rejects immediately and removes listeners", async () => {
+	const v = new Video();
+	const controller = new AbortController();
+	const waiting = seekExportVideo({
+		video: v as unknown as HTMLVideoElement,
+		time: 2,
+		signal: controller.signal,
+	});
+	controller.abort();
+	await expect(waiting).rejects.toHaveProperty("name", "AbortError");
+});

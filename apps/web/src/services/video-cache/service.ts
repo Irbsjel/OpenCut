@@ -1,3 +1,4 @@
+import { ExportStepTimeout, waitForExportStep } from "@/export/wait-for-step";
 import { trimPreviewFrames } from "./preview-budget";
 import { seekExportVideo } from "./export-seek";
 import {
@@ -194,6 +195,8 @@ export class VideoCache {
 	private initPromises = new Map<string, Promise<void>>();
 	private dirtyAfterAsyncSeek = false;
 	private exportMode = false;
+	private exportWaiters = new Set<AbortController>();
+	private exportingMedia = new Set<string>();
 	private playbackActive = false;
 	private watchdogTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -228,6 +231,10 @@ export class VideoCache {
 	}
 
 	setExportMode(enabled: boolean): void {
+		if (!enabled) {
+			for (const controller of this.exportWaiters) controller.abort();
+			this.exportWaiters.clear();
+		}
 		this.exportMode = enabled;
 		for (const sinkData of this.sinks.values()) {
 			sinkData.lastExportRequestedTime = -1;
@@ -295,6 +302,7 @@ export class VideoCache {
 			.filter(
 				(s) =>
 					now - s.lastUsedWallMs > 2500 &&
+					!this.exportingMedia.has(s.mediaId) &&
 					s.slots.every((slot) => !slot.seekInFlight),
 			)
 			.sort((a, b) => a.lastUsedWallMs - b.lastUsedWallMs);
@@ -491,20 +499,56 @@ export class VideoCache {
 
 		// 1. Deterministic frame-accurate path during video export
 		if (this.exportMode) {
-			let exportFrame: WrappedCanvas | null;
+			const attempt = new AbortController();
+			this.exportWaiters.add(attempt);
+			this.exportingMedia.add(mediaId);
 			try {
-				exportFrame = await this.obtainExactExportFrame(sinkData, clampedTime);
+				let exportFrame: WrappedCanvas | null;
+				try {
+					exportFrame = await waitForExportStep(
+						() =>
+							this.obtainExactExportFrame(
+								sinkData,
+								clampedTime,
+								attempt.signal,
+							),
+						{
+							label: `Decodificar ${file.name} en ${clampedTime.toFixed(3)} s`,
+							timeoutMs: 20_000,
+							signal: attempt.signal,
+						},
+					);
+				} catch (error) {
+					if (!(error instanceof ExportStepTimeout)) throw error;
+					// Retire the stuck decoder before trying an isolated native seek.
+					attempt.abort();
+					this.disposeExportDecoderState(sinkData);
+					sinkData.exportSinkFailed = true;
+					if (!this.exportMode || sinkData.disposed) throw error;
+					const recovery = new AbortController();
+					this.exportWaiters.add(recovery);
+					try {
+						exportFrame = await this.obtainExactExportFrame(
+							sinkData,
+							clampedTime,
+							recovery.signal,
+						);
+					} finally {
+						this.exportWaiters.delete(recovery);
+					}
+				}
+				if (!exportFrame)
+					throw new Error("El decodificador no entregó el cuadro solicitado");
+				sinkData.currentFrame = exportFrame;
+				return exportFrame;
 			} catch (error) {
 				throw new Error(
 					`No se pudo exportar «${file.name}» en ${clampedTime.toFixed(3)} s: ${String(error)}`,
 				);
+			} finally {
+				this.exportWaiters.delete(attempt);
+				this.exportingMedia.delete(mediaId);
 			}
-			if (!exportFrame)
-				throw new Error(
-					`No se pudo obtener un cuadro de ${file.name} en ${clampedTime.toFixed(3)} s`,
-				);
-			sinkData.currentFrame = exportFrame;
-			return exportFrame;
 		}
 
 		const nowWall =
@@ -1142,7 +1186,9 @@ export class VideoCache {
 	private async obtainExactExportFrame(
 		sinkData: VideoSinkData,
 		targetTime: number,
+		signal?: AbortSignal,
 	): Promise<WrappedCanvas | null> {
+		signal?.throwIfAborted();
 		if (sinkData.disposed) return null;
 
 		const safeTarget =
@@ -1304,6 +1350,7 @@ export class VideoCache {
 						!state.packetsEnded &&
 						!state.decoderError
 					) {
+						signal?.throwIfAborted();
 						const maxDecodeQueue = state.decodedFrames.length === 0 ? 24 : 14;
 						let fedInBurst = 0;
 						while (
@@ -1370,6 +1417,7 @@ export class VideoCache {
 						lookaheadFed++;
 					}
 
+					signal?.throwIfAborted();
 					const chosenFrame =
 						state.decodedFrames[0] ?? state.preRollFrame ?? null;
 					if (chosenFrame) {
@@ -1395,13 +1443,14 @@ export class VideoCache {
 			}
 		}
 
+		signal?.throwIfAborted();
 		// An isolated native decoder avoids races with preview seeks. Wait for the
 		// requested image, or fail clearly instead of encoding a stale cached frame.
 		const exportVideo = (sinkData.exportVideo ??= createHiddenVideoElement(
 			sinkData.objectUrl,
 		));
 		try {
-			await seekExportVideo({ video: exportVideo, time: safeTarget });
+			await seekExportVideo({ video: exportVideo, time: safeTarget, signal });
 		} catch (error) {
 			throw new Error(
 				`No se pudo exportar «${sinkData.rawBlob instanceof File ? sinkData.rawBlob.name : sinkData.mediaId}» en ${safeTarget.toFixed(3)} s: ${String(error)}`,

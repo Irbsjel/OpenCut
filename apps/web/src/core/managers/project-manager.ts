@@ -15,7 +15,10 @@ import { UpdateProjectSettingsCommand } from "@/commands/project";
 import { DEFAULT_BACKGROUND_COLOR } from "@/background/color";
 import { DEFAULT_CANVAS_SIZE } from "@/canvas/sizes";
 import { DEFAULT_FPS } from "@/fps/defaults";
-import { buildDefaultScene, getProjectDurationFromScenes } from "@/timeline/scenes";
+import {
+	buildDefaultScene,
+	getProjectDurationFromScenes,
+} from "@/timeline/scenes";
 import { buildScene } from "@/services/renderer/scene-builder";
 import { CanvasRenderer } from "@/services/renderer/canvas-renderer";
 import {
@@ -222,6 +225,8 @@ export class ProjectManager {
 	}
 
 	async export({ options }: { options: ExportOptions }): Promise<ExportResult> {
+		if (this.exportState.isExporting)
+			return { success: false, error: "Ya hay una exportación en curso." };
 		this.exportCancelRequested = false;
 		const activeProject = this.editor.project.getActiveOrNull();
 		const durationTicks = this.editor.timeline.getTotalDuration();

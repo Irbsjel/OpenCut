@@ -1,3 +1,4 @@
+import { waitForExportStep } from "@/export/wait-for-step";
 import EventEmitter from "eventemitter3";
 import { yieldToBrowser } from "@/export/yield-to-browser";
 
@@ -57,6 +58,7 @@ export class SceneExporter extends EventEmitter<SceneExporterEvents> {
 	private fileStream?: FileSystemWritableFileStream;
 
 	private isCancelled = false;
+	private abort = new AbortController();
 
 	constructor({
 		width,
@@ -84,6 +86,7 @@ export class SceneExporter extends EventEmitter<SceneExporterEvents> {
 
 	cancel(): void {
 		this.isCancelled = true;
+		this.abort.abort(new DOMException("Exportación cancelada", "AbortError"));
 	}
 
 	async export({
@@ -197,6 +200,15 @@ export class SceneExporter extends EventEmitter<SceneExporterEvents> {
 		const exportCanvas = document.createElement("canvas");
 		exportCanvas.width = exportWidth;
 		exportCanvas.height = exportHeight;
+		// Software encoders consume CPU pixels. Avoid a GPU readback for every
+		// captured frame; hardware encoders keep the accelerated canvas path.
+		if (
+			!exportCanvas.getContext("2d", {
+				alpha: false,
+				willReadFrequently: matchedHwAccel !== "prefer-hardware",
+			})
+		)
+			throw new Error("No se pudo preparar el lienzo de exportación");
 
 		const outputFormat =
 			this.format === "webm"
@@ -284,11 +296,19 @@ export class SceneExporter extends EventEmitter<SceneExporterEvents> {
 
 		let finalized = false;
 		try {
-			await output.start();
+			await waitForExportStep(() => output.start(), {
+				label: "Iniciar archivo",
+				timeoutMs: 15_000,
+				signal: this.abort.signal,
+			});
 
 			if (audioSource && this.audioBuffer) {
 				try {
-					await audioSource.add(this.audioBuffer);
+					await waitForExportStep(() => audioSource!.add(this.audioBuffer!), {
+						label: "Codificar audio",
+						timeoutMs: 90_000,
+						signal: this.abort.signal,
+					});
 				} catch (audioAddErr) {
 					throw new Error(
 						"No se pudo codificar el audio: " + String(audioAddErr),
@@ -303,7 +323,11 @@ export class SceneExporter extends EventEmitter<SceneExporterEvents> {
 			}
 
 			videoCache.setExportMode(true);
-			await videoCache.preloadInitialVideos(rootNode);
+			await waitForExportStep(() => videoCache.preloadInitialVideos(rootNode), {
+				label: "Preparar videos",
+				timeoutMs: 15_000,
+				signal: this.abort.signal,
+			});
 
 			this.emit("progress", 0.01);
 			let lastEmittedProgress = 0.01;
@@ -313,19 +337,33 @@ export class SceneExporter extends EventEmitter<SceneExporterEvents> {
 
 			for (let i = 0; i < frameCount; i++) {
 				if (this.isCancelled) {
-					await output.cancel();
 					this.emit("cancelled");
 					return null;
 				}
 
 				const timeTicks = i * ticksPerFrame;
 				const timeSeconds = mediaTimeToSeconds({ time: timeTicks });
-				await this.renderer.renderToCanvas({
-					node: rootNode,
-					time: timeTicks,
-					targetCanvas: exportCanvas,
-				});
-				await videoSource.add(timeSeconds, 1 / fpsFloat);
+				await waitForExportStep(
+					() =>
+						this.renderer.renderToCanvas({
+							node: rootNode,
+							time: timeTicks,
+							targetCanvas: exportCanvas,
+						}),
+					{
+						label: `Renderizar cuadro ${i + 1} (${timeSeconds.toFixed(3)} s)`,
+						timeoutMs: 45_000,
+						signal: this.abort.signal,
+					},
+				);
+				await waitForExportStep(
+					() => videoSource.add(timeSeconds, 1 / fpsFloat),
+					{
+						label: `Codificar cuadro ${i + 1} (${timeSeconds.toFixed(3)} s)`,
+						timeoutMs: 30_000,
+						signal: this.abort.signal,
+					},
+				);
 
 				const nextProgress = ((i + 1) / frameCount) * 0.98;
 				const nowWall =
@@ -346,13 +384,16 @@ export class SceneExporter extends EventEmitter<SceneExporterEvents> {
 			}
 
 			if (this.isCancelled) {
-				await output.cancel();
 				this.emit("cancelled");
 				return null;
 			}
 
 			videoSource.close();
-			await output.finalize();
+			await waitForExportStep(() => output.finalize(), {
+				label: "Finalizar archivo",
+				timeoutMs: 60_000,
+				signal: this.abort.signal,
+			});
 			finalized = true;
 			this.emit("progress", 1);
 
@@ -366,9 +407,19 @@ export class SceneExporter extends EventEmitter<SceneExporterEvents> {
 
 			this.emit("complete", buffer);
 			return buffer;
+		} catch (error) {
+			if (this.isCancelled) {
+				this.emit("cancelled");
+				return null;
+			}
+			throw error;
 		} finally {
-			if (!finalized) await output.cancel().catch(() => {});
 			videoCache.setExportMode(false);
+			if (!finalized)
+				await waitForExportStep(() => output.cancel(), {
+					label: "Liberar codificador",
+					timeoutMs: 2000,
+				}).catch(() => {});
 		}
 	}
 }
