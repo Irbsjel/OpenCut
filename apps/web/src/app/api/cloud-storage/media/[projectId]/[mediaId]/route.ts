@@ -1,3 +1,4 @@
+import { appendMediaChunk, ChunkUploadError } from "@/services/storage/chunk-upload";
 import { NextRequest, NextResponse } from "next/server";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -121,21 +122,16 @@ export async function PUT(
 		}
 
 		if (offsetParam !== null) {
-			const offset = Number.parseInt(offsetParam, 10) || 0;
-			const partPath = `${filePath}.part`;
+			const offset = Number(offsetParam);
 			const buf = Buffer.from(arrayBuffer);
-			const handle = await fs
-				.open(partPath, offset === 0 ? "w" : "r+")
-				.catch(() => fs.open(partPath, "w"));
-			try {
-				await handle.write(buf, 0, buf.byteLength, offset);
-				await handle.truncate(offset + buf.byteLength);
-			} finally {
-				await handle.close();
-			}
-			if (doneParam === "1") {
-				await fs.rename(partPath, filePath);
-			}
+			const totalParam = req.nextUrl.searchParams.get("totalSize");
+			await appendMediaChunk({
+				filePath,
+				offset,
+				buffer: buf,
+				done: doneParam === "1",
+				totalSize: totalParam === null ? undefined : Number(totalParam),
+			});
 			console.log(
 				`[cloud-media-put] media=${safeMediaId} offset=${offset} len=${buf.byteLength} done=${doneParam}`,
 			);
@@ -158,7 +154,7 @@ export async function PUT(
 	} catch (error) {
 		return NextResponse.json(
 			{ error: error instanceof Error ? error.message : "Upload failed" },
-			{ status: 500 },
+			{ status: error instanceof ChunkUploadError ? error.status : 500 },
 		);
 	}
 }

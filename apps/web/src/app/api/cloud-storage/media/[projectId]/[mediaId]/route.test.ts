@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { NextRequest } from "next/server";
-import { GET } from "./route";
+import { GET, PUT } from "./route";
 let root: string;
 const previous = process.env.OPENCUT_CLOUD_DIR;
 const context = { params: Promise.resolve({ projectId: "test", mediaId: "sample" }) };
@@ -39,3 +39,17 @@ for (const range of ["bytes=50-", "bytes=5-2", "bytes=-0", "bytes=", "bytes=0-1,
   expect(response.status).toBe(416);
  });
 }
+
+test("HTTP upload rejects an absent chunk instead of publishing zeros", async () => {
+ const ctx={params:Promise.resolve({projectId:"test",mediaId:"missing-chunk"})};
+ const response=await PUT(new NextRequest("http://localhost/media?offset=4&done=1&totalSize=8",{method:"PUT",body:"efgh"}),ctx);
+ expect(response.status).toBe(409);
+ expect((await GET(new NextRequest("http://localhost/media"),ctx)).status).toBe(404);
+});
+test("HTTP upload only publishes a complete contiguous media file", async () => {
+ const ctx={params:Promise.resolve({projectId:"test",mediaId:"complete-chunks"})};
+ expect((await PUT(new NextRequest("http://localhost/media?offset=0&done=0&totalSize=8",{method:"PUT",body:"abcd"}),ctx)).status).toBe(200);
+ expect((await GET(new NextRequest("http://localhost/media"),ctx)).status).toBe(404);
+ expect((await PUT(new NextRequest("http://localhost/media?offset=4&done=1&totalSize=8",{method:"PUT",body:"efgh"}),ctx)).status).toBe(200);
+ expect(await (await GET(new NextRequest("http://localhost/media"),ctx)).text()).toBe("abcdefgh");
+});

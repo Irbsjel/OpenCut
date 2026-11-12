@@ -1,3 +1,4 @@
+import { seekExportVideo } from "./export-seek";
 import {
 	ALL_FORMATS,
 	BlobSource,
@@ -455,15 +456,20 @@ export class VideoCache {
 
 		// 1. Deterministic frame-accurate path during video export
 		if (this.exportMode) {
-			const exportFrame = await this.obtainExactExportFrame(
-				sinkData,
-				clampedTime,
-				targetIdx,
-			);
-			if (exportFrame) {
-				sinkData.currentFrame = exportFrame;
-				return exportFrame;
+			let exportFrame: WrappedCanvas | null;
+			try {
+				exportFrame = await this.obtainExactExportFrame(sinkData, clampedTime);
+			} catch (error) {
+				throw new Error(
+					`No se pudo exportar «${file.name}» en ${clampedTime.toFixed(3)} s: ${String(error)}`,
+				);
 			}
+			if (!exportFrame)
+				throw new Error(
+					`No se pudo obtener un cuadro de ${file.name} en ${clampedTime.toFixed(3)} s`,
+				);
+			sinkData.currentFrame = exportFrame;
+			return exportFrame;
 		}
 
 		const nowWall =
@@ -490,11 +496,7 @@ export class VideoCache {
 			dtWallSec >= 0 &&
 			dtWallSec <= 0.32;
 
-		if (
-			isSequentialForward &&
-			dtWallSec >= 0.006 &&
-			dtMediaSec > 0.001
-		) {
+		if (isSequentialForward && dtWallSec >= 0.006 && dtMediaSec > 0.001) {
 			const instRate = Math.max(0.25, Math.min(4.0, dtMediaSec / dtWallSec));
 			slot.estimatedRate = slot.estimatedRate * 0.7 + instRate * 0.3;
 		} else if (!isSequentialForward) {
@@ -528,7 +530,12 @@ export class VideoCache {
 					}
 				}
 
-				const liveFrame = this.drawSlotFrame(sinkData, slot, clampedTime, false);
+				const liveFrame = this.drawSlotFrame(
+					sinkData,
+					slot,
+					clampedTime,
+					false,
+				);
 				if (liveFrame) {
 					sinkData.currentFrame = liveFrame;
 					return liveFrame;
@@ -1087,7 +1094,6 @@ export class VideoCache {
 	private async obtainExactExportFrame(
 		sinkData: VideoSinkData,
 		targetTime: number,
-		targetIdx: number,
 	): Promise<WrappedCanvas | null> {
 		if (sinkData.disposed) return null;
 
@@ -1223,7 +1229,7 @@ export class VideoCache {
 						}
 					}
 
-					const frameTolerance = 0.008;
+					const frameTolerance = 0.000001;
 					const pruneExpiredFrames = () => {
 						while (
 							state.decodedFrames.length >= 2 &&
@@ -1236,8 +1242,7 @@ export class VideoCache {
 
 					const hasSufficientLookahead = () => {
 						if (state.decodedFrames.length === 0) return false;
-						const newest =
-							state.decodedFrames[state.decodedFrames.length - 1]!;
+						const newest = state.decodedFrames[state.decodedFrames.length - 1]!;
 						return (
 							newest.timestamp > safeTarget + 0.015 &&
 							state.decodedFrames.length >= 2
@@ -1251,8 +1256,7 @@ export class VideoCache {
 						!state.packetsEnded &&
 						!state.decoderError
 					) {
-						const maxDecodeQueue =
-							state.decodedFrames.length === 0 ? 24 : 14;
+						const maxDecodeQueue = state.decodedFrames.length === 0 ? 24 : 14;
 						let fedInBurst = 0;
 						while (
 							!hasSufficientLookahead() &&
@@ -1321,6 +1325,15 @@ export class VideoCache {
 					const chosenFrame =
 						state.decodedFrames[0] ?? state.preRollFrame ?? null;
 					if (chosenFrame) {
+						if (
+							chosenFrame.timestamp > safeTarget + 0.000001 ||
+							chosenFrame.timestamp + chosenFrame.duration <
+								safeTarget - 0.000001
+						) {
+							throw new Error(
+								"Decoded frame does not cover requested source time",
+							);
+						}
 						stampCanvasRevision(chosenFrame.canvas);
 						state.lastRequestedTime = safeTarget;
 						sinkData.lastExportRequestedTime = safeTarget;
@@ -1334,66 +1347,17 @@ export class VideoCache {
 			}
 		}
 
-		// Fallback Path: Deterministic HTMLVideoElement seek if WebCodecs is unavailable for this container
-		const slot = this.selectSlotForTime(sinkData, targetTime, nowWall);
-		slot.lastTargetTime = targetTime;
-		slot.lastRequestWallMs = nowWall;
-
-		if (slot.seekInFlight) {
-			await Promise.race([
-				slot.seekInFlight,
-				new Promise((r) => setTimeout(r, 300)),
-			]);
-		}
-
-		const exportVideo = slot.videoEl;
-
-		if (exportVideo.readyState < 2) {
-			await new Promise<void>((resolve) => {
-				const t = setTimeout(resolve, 400);
-				const onReady = () => {
-					if (exportVideo.readyState >= 2) {
-						clearTimeout(t);
-						resolve();
-					}
-				};
-				exportVideo.addEventListener("loadeddata", onReady, { once: true });
-				exportVideo.addEventListener("canplay", onReady, { once: true });
-			});
-		}
-
-		if (!exportVideo.paused) {
-			try {
-				exportVideo.pause();
-			} catch {
-				// ignore
-			}
-		}
-
-		if (Math.abs(exportVideo.currentTime - safeTarget) > 0.014) {
-			await new Promise<void>((resolve) => {
-				let settled = false;
-				const finish = () => {
-					if (settled) return;
-					settled = true;
-					clearTimeout(t);
-					exportVideo.removeEventListener("seeked", finish);
-					resolve();
-				};
-				const t = setTimeout(finish, 180);
-				exportVideo.addEventListener("seeked", finish, { once: true });
-				try {
-					exportVideo.currentTime =
-						safeTarget === 0 && exportVideo.currentTime === 0
-							? 0.001
-							: safeTarget;
-					if (!exportVideo.seeking) {
-						finish();
-					}
-				} catch {
-					finish();
-				}
-			});
+		// An isolated native decoder avoids races with preview seeks. Wait for the
+		// requested image, or fail clearly instead of encoding a stale cached frame.
+		const exportVideo = (sinkData.exportVideo ??= createHiddenVideoElement(
+			sinkData.objectUrl,
+		));
+		try {
+			await seekExportVideo({ video: exportVideo, time: safeTarget });
+		} catch (error) {
+			throw new Error(
+				`No se pudo exportar «${sinkData.rawBlob instanceof File ? sinkData.rawBlob.name : sinkData.mediaId}» en ${safeTarget.toFixed(3)} s: ${String(error)}`,
+			);
 		}
 
 		if (exportVideo.readyState >= 2) {
@@ -1426,7 +1390,6 @@ export class VideoCache {
 					try {
 						ctx.drawImage(exportVideo, 0, 0, exportW, exportH);
 						stampCanvasRevision(canvas);
-						slot.lastDrawnMediaTime = exportVideo.currentTime;
 						const wrapped: WrappedCanvas = {
 							canvas,
 							timestamp: exportVideo.currentTime,
@@ -1442,11 +1405,8 @@ export class VideoCache {
 			}
 		}
 
-		return (
-			sinkData.scrubCache.get(targetIdx) ??
-			slot.lastFrame ??
-			sinkData.slots[0].lastFrame ??
-			sinkData.currentFrame
+		throw new Error(
+			`No se pudo dibujar el cuadro de ${sinkData.mediaId} en ${safeTarget.toFixed(3)} s`,
 		);
 	}
 

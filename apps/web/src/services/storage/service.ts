@@ -112,7 +112,7 @@ class StorageService {
 				const end = Math.min(offset + CHUNK_SIZE, activeFile.size);
 				const isDone = end >= activeFile.size;
 				const sliceBuf = await activeFile.slice(offset, end).arrayBuffer();
-				const chunkUrl = `${url}?offset=${offset}&done=${isDone ? "1" : "0"}`;
+				const chunkUrl = `${url}?offset=${offset}&done=${isDone ? "1" : "0"}&totalSize=${activeFile.size}`;
 				const putRes = await fetch(chunkUrl, {
 					method: "PUT",
 					headers: { "Content-Type": "application/octet-stream" },
