@@ -14,6 +14,9 @@ import {
 } from "@/diagnostics/render-perf";
 import type { BlendMode } from "@/rendering";
 import type { TransitionVisualFx } from "@/animation/clip-animations";
+import { GAUSSIAN_BLUR_SHADER } from "@/effects/definitions/blur";
+import type { EffectPass } from "@/effects/types";
+import { isGpuAvailable } from "../gpu-renderer";
 import type {
 	ExternalTextureDescriptor,
 	FrameDescriptor,
@@ -210,6 +213,7 @@ class WasmCompositor {
 		);
 
 		const needsWasmGpu =
+			isGpuAvailable() &&
 			!hasGeometricMaskTransition &&
 			frame.items.some(
 				(item) =>
@@ -284,6 +288,28 @@ class WasmCompositor {
 		}
 
 		for (const item of frame.items) {
+			if (item.type === "sceneEffect") {
+				const blurPx = extractGaussianBlurPx(item.effectPassGroups);
+				if (blurPx > 0.05 && ctx.canvas.width > 0 && ctx.canvas.height > 0) {
+					const snapshot = createBackingCanvas({
+						width: ctx.canvas.width,
+						height: ctx.canvas.height,
+					});
+					const snapCtx = snapshot.getContext("2d");
+					if (snapCtx) {
+						snapCtx.drawImage(ctx.canvas, 0, 0);
+						ctx.save();
+						ctx.setTransform(1, 0, 0, 1, 0, 0);
+						ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+						const scaleFactor = ctx.canvas.width / Math.max(1, width);
+						ctx.filter = `blur(${(blurPx * scaleFactor).toFixed(2)}px)`;
+						ctx.drawImage(snapshot, 0, 0);
+						ctx.filter = "none";
+						ctx.restore();
+					}
+				}
+				continue;
+			}
 			if (item.type !== "layer") continue;
 			if (item.opacity <= 0) continue;
 
@@ -301,6 +327,7 @@ class WasmCompositor {
 				transform: item.transform,
 				opacity: item.opacity,
 				blendMode: item.blendMode,
+				effectPassGroups: item.effectPassGroups,
 				transitionFx: item.transitionFx ?? null,
 			});
 		}
@@ -426,6 +453,27 @@ class WasmCompositor {
 
 export const wasmCompositor = new WasmCompositor();
 
+function extractGaussianBlurPx(effectPassGroups: EffectPass[][]): number {
+	let totalSigmaSq = 0;
+	for (const group of effectPassGroups) {
+		let groupXSq = 0;
+		let groupYSq = 0;
+		for (const pass of group) {
+			if (pass.shader !== GAUSSIAN_BLUR_SHADER) continue;
+			const sigma =
+				typeof pass.uniforms.u_sigma === "number" ? pass.uniforms.u_sigma : 0;
+			const dir = pass.uniforms.u_direction;
+			if (Array.isArray(dir) && dir[0] === 1) {
+				groupXSq += sigma * sigma;
+			} else if (Array.isArray(dir) && dir[1] === 1) {
+				groupYSq += sigma * sigma;
+			}
+		}
+		totalSigmaSq += Math.max(groupXSq, groupYSq);
+	}
+	return Math.sqrt(totalSigmaSq);
+}
+
 function drawLayer2D({
 	ctx,
 	canvasWidth,
@@ -436,6 +484,7 @@ function drawLayer2D({
 	transform,
 	opacity,
 	blendMode,
+	effectPassGroups,
 	transitionFx,
 }: {
 	ctx: CanvasRenderingContext2D;
@@ -447,6 +496,7 @@ function drawLayer2D({
 	transform: QuadTransformDescriptor;
 	opacity: number;
 	blendMode: BlendMode;
+	effectPassGroups: EffectPass[][];
 	transitionFx: TransitionVisualFx | null;
 }) {
 	const x = transform.centerX - transform.width / 2;
@@ -458,10 +508,14 @@ function drawLayer2D({
 	const baseAlpha = Math.max(0, Math.min(1, opacity));
 	const p = transitionFx ? Math.max(0, Math.min(1, transitionFx.progress)) : 1;
 	const intensity = 1 - p;
+	const blurPx = extractGaussianBlurPx(effectPassGroups);
 
 	ctx.save();
 	ctx.globalAlpha = baseAlpha;
 	ctx.globalCompositeOperation = mapBlendModeToCompositeOp(blendMode);
+	if (blurPx > 0.05) {
+		ctx.filter = `blur(${blurPx.toFixed(2)}px)`;
+	}
 
 	// 1. Apply Geometric Mask Clipping if active (GL-Transitions Wipes & Masks)
 	if (transitionFx && intensity > 0.005) {

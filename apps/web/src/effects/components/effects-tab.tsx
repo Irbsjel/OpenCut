@@ -140,13 +140,24 @@ export function ClipEffectsTab({
 		setDropIndex(null);
 	};
 
+	const handleAddBlur = () => {
+		editor.timeline.addClipEffect({
+			trackId,
+			elementId: element.id,
+			effectType: "blur",
+		});
+	};
+
 	return (
 		<div className="flex flex-col h-full">
-			<div className="border-b px-3.5 h-11 shrink-0 flex items-center">
+			<div className="border-b px-3.5 h-11 shrink-0 flex items-center justify-between">
 				<SectionTitle>Effects</SectionTitle>
+				<Button variant="ghost" size="sm" onClick={handleAddBlur}>
+					+ Blur
+				</Button>
 			</div>
 			{effects.length === 0 ? (
-				<EmptyView />
+				<EmptyView onAddBlur={handleAddBlur} />
 			) : (
 				<ul className="flex flex-col">
 					{effects.map((effect, index) => {
@@ -203,7 +214,7 @@ export function ClipEffectsTab({
 	);
 }
 
-function EmptyView() {
+function EmptyView({ onAddBlur }: { onAddBlur: () => void }) {
 	const setActiveTab = useAssetsPanelStore((s) => s.setActiveTab);
 
 	return (
@@ -216,16 +227,21 @@ function EmptyView() {
 			<div className="flex flex-col gap-2">
 				<h3 className="font-medium text-foreground">No effects</h3>
 				<p className="text-muted-foreground text-sm text-balance max-w-44">
-					Add effects to this layer from the Assets panel.
+					Add effects to this layer from the Assets panel or add Blur directly.
 				</p>
 			</div>
-			<Button
-				variant="default"
-				size="sm"
-				onClick={() => setActiveTab("effects")}
-			>
-				Open effects
-			</Button>
+			<div className="flex items-center gap-2">
+				<Button variant="default" size="sm" onClick={onAddBlur}>
+					+ Add Blur
+				</Button>
+				<Button
+					variant="outline"
+					size="sm"
+					onClick={() => setActiveTab("effects")}
+				>
+					Open effects
+				</Button>
+			</div>
 		</div>
 	);
 }
