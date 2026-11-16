@@ -59,7 +59,47 @@ class StorageService {
 	private cloudSyncPromise: Promise<void> | null = null;
 	private mediaUploadLoopPromise: Promise<void> | null = null;
 	private uploadedMediaKeys = new Set<string>();
+	private uploadedMediaCacheHydrated = false;
 	private pushProjectTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+	private hydrateUploadedMediaCache(): void {
+		if (this.uploadedMediaCacheHydrated || typeof window === "undefined") return;
+		this.uploadedMediaCacheHydrated = true;
+		try {
+			const raw = sessionStorage.getItem("opencut_uploaded_media_keys_v1");
+			if (!raw) return;
+			const parsed = JSON.parse(raw);
+			if (Array.isArray(parsed)) {
+				for (const item of parsed) {
+					if (typeof item === "string" && item) {
+						this.uploadedMediaKeys.add(item);
+					}
+				}
+			}
+		} catch {
+			// ignore sessionStorage errors
+		}
+	}
+
+	private hasUploadedMedia(mediaId: string): boolean {
+		this.hydrateUploadedMediaCache();
+		return this.uploadedMediaKeys.has(mediaId);
+	}
+
+	private markMediaUploaded(mediaId: string): void {
+		this.hydrateUploadedMediaCache();
+		if (this.uploadedMediaKeys.has(mediaId)) return;
+		this.uploadedMediaKeys.add(mediaId);
+		if (typeof window === "undefined") return;
+		try {
+			sessionStorage.setItem(
+				"opencut_uploaded_media_keys_v1",
+				JSON.stringify(Array.from(this.uploadedMediaKeys)),
+			);
+		} catch {
+			// ignore quota errors
+		}
+	}
 
 	private getCloudApiBase(): string {
 		if (
@@ -83,12 +123,12 @@ class StorageService {
 		fileHandle?: FileSystemFileHandle;
 	}): Promise<void> {
 		if (typeof window === "undefined") return;
-		if (this.uploadedMediaKeys.has(mediaId)) return;
+		if (this.hasUploadedMedia(mediaId)) return;
 		const url = `${this.getCloudApiBase()}/media/${encodeURIComponent(projectId)}/${encodeURIComponent(mediaId)}`;
 		try {
 			const headRes = await fetch(url, { method: "HEAD" });
 			if (headRes.ok) {
-				this.uploadedMediaKeys.add(mediaId);
+				this.markMediaUploaded(mediaId);
 				return;
 			}
 			let activeFile =
@@ -126,7 +166,7 @@ class StorageService {
 					return;
 				}
 			}
-			this.uploadedMediaKeys.add(mediaId);
+			this.markMediaUploaded(mediaId);
 		} catch (error) {
 			const msg = error instanceof Error ? error.message : String(error);
 			void fetch(`${url}?diag=${encodeURIComponent(`err_${msg}`)}`, {
@@ -197,7 +237,7 @@ class StorageService {
 							}
 						).entries()) {
 							if (fHandle.kind !== "file" || !fName) continue;
-							if (this.uploadedMediaKeys.has(fName)) continue;
+							if (this.hasUploadedMedia(fName)) continue;
 							tasks.push({
 								projectId,
 								mediaId: fName,
@@ -207,12 +247,12 @@ class StorageService {
 					}
 
 					let cursor = 0;
-					const CONCURRENCY = 3;
+					const CONCURRENCY = 2;
 					const workers = Array.from({ length: CONCURRENCY }, async () => {
 						while (cursor < tasks.length) {
 							const idx = cursor++;
 							const task = tasks[idx];
-							if (!task || this.uploadedMediaKeys.has(task.mediaId)) continue;
+							if (!task || this.hasUploadedMedia(task.mediaId)) continue;
 							await this.uploadSingleMediaToCloud({
 								projectId: task.projectId,
 								mediaId: task.mediaId,
@@ -277,7 +317,83 @@ class StorageService {
 		// Schedule OPFS media upload after initial hydration so it never competes with loadProject
 		setTimeout(() => {
 			void this.runBackgroundMediaUpload();
-		}, 8000);
+		}, 12000);
+
+		if (targetProjectId) {
+			try {
+				await this.ensureMigrations();
+				const localProj = await this.projectsAdapter.get(targetProjectId);
+				const localUpdated = localProj?.metadata?.updatedAt || "";
+				const controller = new AbortController();
+				const timeoutId = setTimeout(() => controller.abort(), 4000);
+				let getRes: Response | null = null;
+				try {
+					getRes = await fetch(
+						`${this.getCloudApiBase()}?id=${encodeURIComponent(targetProjectId)}`,
+						{ signal: controller.signal },
+					);
+				} finally {
+					clearTimeout(timeoutId);
+				}
+
+				if (getRes?.ok) {
+					const data = (await getRes.json()) as {
+						project?: SerializedProject;
+						mediaMetadata?: MediaAssetData[];
+					};
+					if (data.project?.metadata?.id) {
+						const pid = data.project.metadata.id;
+						const remoteUpdated = data.project.metadata.updatedAt || "";
+						const localTime = localUpdated
+							? new Date(localUpdated).getTime()
+							: -1;
+						const remoteTime = remoteUpdated
+							? new Date(remoteUpdated).getTime()
+							: 0;
+						if (!localUpdated || remoteTime >= localTime) {
+							const normalizedProject = {
+								...data.project,
+								id: pid,
+							} as SerializedProject;
+							await this.projectsAdapter.set({
+								key: pid,
+								value: normalizedProject,
+							});
+						} else if (localProj) {
+							this.pushProjectByIdToCloud(pid);
+						}
+
+						const { mediaMetadataAdapter } = this.getProjectMediaAdapters({
+							projectId: pid,
+						});
+						const existingKeys = new Set(
+							await mediaMetadataAdapter.list().catch(() => []),
+						);
+						const remoteMediaIds = new Set<string>();
+						for (const m of data.mediaMetadata ?? []) {
+							if (!m?.id) continue;
+							remoteMediaIds.add(m.id);
+							if (!existingKeys.has(m.id) || remoteTime >= localTime) {
+								await mediaMetadataAdapter.set({ key: m.id, value: m });
+							}
+						}
+						if (remoteTime >= localTime && remoteMediaIds.size > 0) {
+							for (const oldKey of existingKeys) {
+								if (!remoteMediaIds.has(oldKey)) {
+									await mediaMetadataAdapter.remove(oldKey).catch(() => {});
+								}
+							}
+						}
+					}
+				} else if (localProj) {
+					this.pushProjectByIdToCloud(targetProjectId);
+				}
+			} catch {
+				// ignore offline/timeout on targeted sync; local IndexedDB copy will be used immediately
+			}
+			return;
+		}
+
 		if (this.cloudSyncPromise) {
 			return this.cloudSyncPromise;
 		}

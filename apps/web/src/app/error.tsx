@@ -27,17 +27,28 @@ export default function AppError({
 			}
 		}
 		console.error("[OpenCut Error Boundary]:", error);
+		if (typeof window !== "undefined") {
+			const summary = `${error?.name || "Error"}: ${msg} | ${String(error?.stack || "").split("\n").slice(0, 4).join(" <- ")}`.slice(0, 400);
+			fetch(`/videos/api/health?client_error=${encodeURIComponent(summary)}`).catch(() => {});
+		}
 	}, [error]);
+
+	const errorDetail = `${error?.name || "Error"}: ${error?.message || "Error desconocido"}${
+		error?.stack ? `\n${error.stack.split("\n").slice(0, 6).join("\n")}` : ""
+	}`;
 
 	return (
 		<div className="bg-background text-foreground flex min-h-screen w-full flex-col items-center justify-center gap-4 p-6 text-center">
-			<div className="max-w-md space-y-3 rounded-xl border border-white/10 bg-zinc-900/90 p-6 shadow-xl">
+			<div className="max-w-lg space-y-3 rounded-xl border border-white/10 bg-zinc-900/90 p-6 shadow-xl">
 				<h2 className="text-base font-semibold text-white">
 					Sincronizando vista del editor…
 				</h2>
 				<p className="text-xs text-zinc-400">
 					Se actualizó un módulo en segundo plano o hubo una interrupción temporal de memoria.
 				</p>
+				<pre className="max-h-40 overflow-auto rounded-lg bg-black/50 p-3 text-left font-mono text-[11px] text-red-300 whitespace-pre-wrap break-all">
+					{errorDetail}
+				</pre>
 				<div className="flex items-center justify-center gap-3 pt-2">
 					<button
 						type="button"

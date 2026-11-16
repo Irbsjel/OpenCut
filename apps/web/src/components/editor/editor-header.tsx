@@ -61,7 +61,6 @@ function ProjectDropdown() {
 
 		try {
 			await editor.project.prepareExit();
-			editor.project.closeProject();
 		} catch (error) {
 			console.error("Failed to prepare project exit:", error);
 		} finally {

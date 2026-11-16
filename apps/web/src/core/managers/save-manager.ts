@@ -47,6 +47,7 @@ export class SaveManager {
 
 	pause(): void {
 		this.isPaused = true;
+		this.clearTimer();
 	}
 
 	resume(): void {
@@ -56,15 +57,22 @@ export class SaveManager {
 		}
 	}
 
+	clearDirty(): void {
+		this.hasPendingSave = false;
+		this.clearTimer();
+	}
+
 	markDirty({ force = false }: { force?: boolean } = {}): void {
 		if (this.isPaused && !force) return;
 		this.hasPendingSave = true;
-		this.queueSave();
+		if (!this.isPaused) {
+			this.queueSave();
+		}
 	}
 
 	async flush(): Promise<void> {
 		this.hasPendingSave = true;
-		await this.saveNow();
+		await this.saveNow({ force: true });
 	}
 
 	getIsDirty(): boolean {
@@ -72,7 +80,7 @@ export class SaveManager {
 	}
 
 	private queueSave(): void {
-		if (this.isSaving) return;
+		if (this.isSaving || this.isPaused) return;
 		if (this.saveTimer) {
 			clearTimeout(this.saveTimer);
 		}
@@ -81,13 +89,24 @@ export class SaveManager {
 		}, this.debounceMs);
 	}
 
-	private async saveNow(): Promise<void> {
+	private async saveNow({
+		force = false,
+	}: {
+		force?: boolean;
+	} = {}): Promise<void> {
 		if (this.isSaving) return;
+		if (this.isPaused && !force) return;
 		if (!this.hasPendingSave) return;
 
 		const activeProject = this.editor.project.getActiveOrNull();
 		if (!activeProject) return;
-		if (this.editor.project.getIsLoading()) return;
+		if (
+			!force &&
+			(this.editor.project.getIsLoading() ||
+				this.editor.project.getIsLoadingProject())
+		) {
+			return;
+		}
 		if (this.editor.project.getMigrationState().isMigrating) return;
 
 		this.isSaving = true;
@@ -98,7 +117,7 @@ export class SaveManager {
 			await this.editor.project.saveCurrentProject();
 		} finally {
 			this.isSaving = false;
-			if (this.hasPendingSave) {
+			if (this.hasPendingSave && !this.isPaused) {
 				this.queueSave();
 			}
 		}

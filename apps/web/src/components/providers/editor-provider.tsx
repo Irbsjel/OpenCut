@@ -25,14 +25,16 @@ interface EditorProviderProps {
 
 export function EditorProvider({ projectId, children }: EditorProviderProps) {
 	const activeProject = useEditor((e) => e.project.getActiveOrNull());
+	const activeScene = useEditor((e) => e.scenes.getActiveSceneOrNull());
 	const router = useRouter();
 	const [isLoading, setIsLoading] = useState(true);
+	const [loadedProjectId, setLoadedProjectId] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);
 	const { setLoadingProject } = useKeybindingsStore();
 
 	useEffect(() => {
-		setLoadingProject(isLoading);
-	}, [isLoading, setLoadingProject]);
+		setLoadingProject(isLoading || loadedProjectId !== projectId);
+	}, [isLoading, loadedProjectId, projectId, setLoadingProject]);
 
 	useEffect(() => {
 		let cancelled = false;
@@ -40,6 +42,7 @@ export function EditorProvider({ projectId, children }: EditorProviderProps) {
 
 		const loadProject = async () => {
 			try {
+				setError(null);
 				setIsLoading(true);
 				void initializeGpuRenderer().then(() => {
 					editor.renderer.setDegraded(!isGpuAvailable());
@@ -48,6 +51,7 @@ export function EditorProvider({ projectId, children }: EditorProviderProps) {
 
 				if (cancelled) return;
 
+				setLoadedProjectId(projectId);
 				setIsLoading(false);
 				loadFontAtlas();
 			} catch (err) {
@@ -66,6 +70,7 @@ export function EditorProvider({ projectId, children }: EditorProviderProps) {
 						});
 						await editor.project.loadProject({ id: projectId });
 						if (cancelled) return;
+						setLoadedProjectId(projectId);
 						setIsLoading(false);
 						loadFontAtlas();
 					} catch (_createErr) {
@@ -105,7 +110,7 @@ export function EditorProvider({ projectId, children }: EditorProviderProps) {
 		);
 	}
 
-	if (isLoading) {
+	if (isLoading || loadedProjectId !== projectId) {
 		return (
 			<div className="bg-background flex h-screen w-screen items-center justify-center">
 				<div className="flex flex-col items-center gap-4">
@@ -116,7 +121,11 @@ export function EditorProvider({ projectId, children }: EditorProviderProps) {
 		);
 	}
 
-	if (!activeProject) {
+	if (
+		!activeProject ||
+		activeProject.metadata.id !== projectId ||
+		!activeScene
+	) {
 		return (
 			<div className="bg-background flex h-screen w-screen items-center justify-center">
 				<div className="flex flex-col items-center gap-4">

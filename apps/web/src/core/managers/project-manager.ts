@@ -44,6 +44,7 @@ export class ProjectManager {
 	private active: TProject | null = null;
 	private savedProjects: TProjectMetadata[] = [];
 	private isLoading = true;
+	private isLoadingProject = false;
 	private isInitialized = false;
 	private invalidProjectIds = new Set<string>();
 	private storageMigrationPromise: Promise<void> | null = null;
@@ -118,53 +119,77 @@ export class ProjectManager {
 			version: CURRENT_PROJECT_VERSION,
 		};
 
-		this.active = newProject;
-		this.notify();
+		this.editor.save.pause();
+		this.editor.save.clearDirty();
 
+		this.active = newProject;
 		this.editor.media.clearAllAssets();
 		this.editor.scenes.initializeScenes({
 			scenes: newProject.scenes,
 			currentSceneId: newProject.currentSceneId,
 		});
+		this.notify();
 
 		try {
 			await storageService.saveProject({ project: newProject });
 			this.updateMetadata(newProject);
+			this.editor.save.clearDirty();
 
 			return newProject.metadata.id;
 		} catch (error) {
 			toast.error("Failed to save new project");
 			throw error;
+		} finally {
+			this.editor.save.resume();
 		}
 	}
 
 	async loadProject({ id }: { id: string }): Promise<void> {
+		this.isLoadingProject = true;
 		if (!this.isInitialized) {
 			this.isLoading = true;
 			this.notify();
 		}
 
 		this.editor.save.pause();
+		this.editor.save.clearDirty();
 		await this.ensureStorageMigrations();
-		this.editor.media.clearAllAssets();
-		this.editor.scenes.clearScenes();
 
 		try {
 			const result = await storageService.loadProject({ id });
 			if (!result) {
+				this.editor.media.clearAllAssets();
+				this.editor.scenes.clearScenes();
 				throw new Error(`Project with id ${id} not found`);
 			}
 
 			const project = result.project;
+			const hadEmptyScenes = !project.scenes || project.scenes.length === 0;
 
 			this.active = project;
+			this.editor.media.clearAllAssets();
+			this.editor.scenes.initializeScenes({
+				scenes: project.scenes ?? [],
+				currentSceneId: project.currentSceneId,
+			});
+
+			const ensuredScenes = this.editor.scenes.getScenes();
+			const activeScene = this.editor.scenes.getActiveScene();
+			const hydratedProject: TProject = hadEmptyScenes
+				? {
+						...project,
+						scenes: ensuredScenes,
+						currentSceneId: activeScene.id,
+					}
+				: project;
+
+			this.active = hydratedProject;
 			this.notify();
 
-			if (project.scenes && project.scenes.length > 0) {
-				this.editor.scenes.initializeScenes({
-					scenes: project.scenes,
-					currentSceneId: project.currentSceneId,
-				});
+			if (hadEmptyScenes) {
+				await storageService.saveProject({ project: hydratedProject });
+				this.updateMetadata(hydratedProject);
+				this.editor.save.clearDirty();
 			}
 
 			await this.editor.media.loadProjectMedia({ projectId: id });
@@ -172,14 +197,14 @@ export class ProjectManager {
 			void loadFonts({
 				families: [
 					...new Set(
-						(project.scenes ?? []).flatMap((scene) =>
+						ensuredScenes.flatMap((scene) =>
 							getElementFontFamilies({ tracks: scene.tracks }),
 						),
 					),
 				],
 			});
 
-			if (!project.metadata.thumbnail) {
+			if (!hydratedProject.metadata.thumbnail) {
 				void (async () => {
 					try {
 						const didUpdateThumbnail = await this.updateThumbnailFromTimeline();
@@ -195,6 +220,7 @@ export class ProjectManager {
 			console.error("Failed to load project:", error);
 			throw error;
 		} finally {
+			this.isLoadingProject = false;
 			this.isLoading = false;
 			this.notify();
 			this.editor.save.resume();
@@ -206,6 +232,7 @@ export class ProjectManager {
 
 		try {
 			const scenes = this.editor.scenes.getScenes();
+			if (scenes.length === 0) return;
 			const updatedProject = {
 				...this.active,
 				scenes,
@@ -682,6 +709,10 @@ export class ProjectManager {
 
 	getIsLoading(): boolean {
 		return this.isLoading;
+	}
+
+	getIsLoadingProject(): boolean {
+		return this.isLoadingProject;
 	}
 
 	getIsInitialized(): boolean {

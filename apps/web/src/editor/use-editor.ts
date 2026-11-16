@@ -53,7 +53,20 @@ export function useEditor<T>(
 			return editor;
 		}
 
-		const next = selector(editor);
+		let next: T;
+		try {
+			next = selector(editor);
+		} catch (error) {
+			if (
+				snapshotCacheRef.current !== SNAPSHOT_UNSET &&
+				error instanceof Error &&
+				(error.message === "No active scene." ||
+					error.message === "No active project")
+			) {
+				return snapshotCacheRef.current;
+			}
+			throw error;
+		}
 		if (
 			snapshotCacheRef.current !== SNAPSHOT_UNSET &&
 			isShallowEqual({
