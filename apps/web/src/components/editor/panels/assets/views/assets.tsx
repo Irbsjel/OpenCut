@@ -382,25 +382,39 @@ function MediaItemWithContextMenu({
 		idsToDownload.length > 1
 			? `Descargar ${idsToDownload.length} archivos`
 			: "Descargar";
-	const downloadAssets = ({ ids }: { ids: string[] }) => {
-		const assets = editor.media.getAssets();
-		ids.forEach((id, index) => {
-			const asset = assets.find((a) => a.id === id);
-			if (!asset) return;
-			const href = asset.file
-				? URL.createObjectURL(asset.file)
-				: asset.url;
-			if (!href) return;
-			setTimeout(() => {
-				const a = document.createElement("a");
-				a.href = href;
-				a.download = asset.name;
-				document.body.appendChild(a);
-				a.click();
-				a.remove();
-				if (asset.file) setTimeout(() => URL.revokeObjectURL(href), 10000);
-			}, index * 250);
-		});
+	const downloadAssets = async ({ ids }: { ids: string[] }) => {
+		const known = editor.media.getAssets();
+		let done = 0;
+		for (const [index, id] of ids.entries()) {
+			const asset =
+				known.find((a) => a.id === id) ?? (id === item.id ? item : undefined);
+			if (!asset) continue;
+			try {
+				let blob: Blob | undefined = asset.file;
+				if (!blob || blob.size === 0) {
+					if (!asset.url) throw new Error("sin archivo fuente");
+					const res = await fetch(asset.url);
+					if (!res.ok) throw new Error(`HTTP ${res.status}`);
+					blob = await res.blob();
+				}
+				const href = URL.createObjectURL(blob);
+				const link = document.createElement("a");
+				link.href = href;
+				link.download = asset.name || `archivo-${index + 1}`;
+				document.body.appendChild(link);
+				link.click();
+				link.remove();
+				setTimeout(() => URL.revokeObjectURL(href), 30000);
+				done += 1;
+				await new Promise((r) => setTimeout(r, 300));
+			} catch (error) {
+				toast.error(
+					`No se pudo descargar ${asset.name}: ${error instanceof Error ? error.message : "error"}`,
+				);
+			}
+		}
+		if (done > 0) toast.success(`Descargado${done > 1 ? `s ${done} archivos` : ""}`);
+		else if (ids.length > 0) toast.error("No se encontró ningún archivo para descargar.");
 	};
 	const deleteLabel =
 		idsToDelete.length > 1 ? `Delete ${idsToDelete.length} items` : "Delete";
