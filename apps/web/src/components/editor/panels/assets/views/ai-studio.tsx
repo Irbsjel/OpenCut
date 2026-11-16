@@ -213,97 +213,89 @@ function synthesizeMultiTrackMusicWavFile({
 	return { file, dataUrl, duration: seconds };
 }
 
-function synthesizeUltraVoiceWavFile({
+export interface TtsVoiceOption {
+	id: string;
+	label: string;
+}
+
+export interface TtsEngineInfo {
+	id: string;
+	label: string;
+	kind: string;
+	available: boolean;
+	rate: boolean;
+	pitch: boolean;
+	nativeMulti: boolean;
+	defaultVoice: string;
+	defaultVoice2: string;
+	voices: TtsVoiceOption[];
+}
+
+const TTS_API_URL = `${process.env.NEXT_PUBLIC_BASE_PATH || "/videos"}/api/tts`;
+
+export async function fetchTtsEngines(refresh = false): Promise<TtsEngineInfo[]> {
+	const resp = await fetch(`${TTS_API_URL}${refresh ? "?refresh=1" : ""}`);
+	const data = await resp.json().catch(() => ({}));
+	if (!resp.ok || !data.ok) {
+		throw new Error(data.error || `No se pudo leer la lista de motores (${resp.status})`);
+	}
+	return data.engines as TtsEngineInfo[];
+}
+
+/** Sintetiza voz real con el motor elegido (edge, gemini, openai, melotts, gtts, espeak). */
+export async function synthesizeVoiceFile({
 	script,
-	voice1Id,
-	voice2Id,
+	engine,
+	voice,
+	voice2,
 	multiSpeaker,
+	rate = 0,
+	pitch = 0,
 }: {
 	script: string;
-	voice1Id: string;
-	voice2Id: string;
+	engine: string;
+	voice: string;
+	voice2?: string;
 	multiSpeaker: boolean;
-}): { file: File; dataUrl: string; duration: number } {
-	const v1 =
-		GOOGLE_ULTRA_30_VOICES.find((v) => v.id === voice1Id) ||
-		GOOGLE_ULTRA_30_VOICES[0];
-	const v2 =
-		GOOGLE_ULTRA_30_VOICES.find((v) => v.id === voice2Id) ||
-		GOOGLE_ULTRA_30_VOICES[1];
-
-	const lines = script
-		.split(/\n+/)
-		.map((l) => l.trim())
-		.filter(Boolean);
-	const turns =
-		lines.length > 0
-			? lines.map((line, idx) => ({
-					voice: multiSpeaker && idx % 2 === 1 ? v2 : v1,
-					text: line,
-				}))
-			: [{ voice: v1, text: script || "Locución generada con Google AI Ultra." }];
-
-	const sampleRate = 22050;
-	const turnDur = Math.max(2.2, Math.min(4.5, 6.5 / Math.max(1, turns.length)));
-	const totalSec = Math.max(3, Math.min(18, Math.round(turns.length * turnDur)));
-	const numSamples = sampleRate * totalSec;
-	const buffer = new ArrayBuffer(44 + numSamples * 2);
-	const view = new DataView(buffer);
-
-	const writeStr = (offset: number, str: string) => {
-		for (let i = 0; i < str.length; i++) {
-			view.setUint8(offset + i, str.charCodeAt(i));
-		}
-	};
-
-	writeStr(0, "RIFF");
-	view.setUint32(4, 36 + numSamples * 2, true);
-	writeStr(8, "WAVE");
-	writeStr(12, "fmt ");
-	view.setUint32(16, 16, true);
-	view.setUint16(20, 1, true);
-	view.setUint16(22, 1, true);
-	view.setUint32(24, sampleRate, true);
-	view.setUint32(28, sampleRate * 2, true);
-	view.setUint16(32, 2, true);
-	view.setUint16(34, 16, true);
-	writeStr(36, "data");
-	view.setUint32(40, numSamples * 2, true);
-
-	for (let i = 0; i < numSamples; i++) {
-		const t = i / sampleRate;
-		const turnIdx = Math.min(
-			turns.length - 1,
-			Math.floor((t / totalSec) * turns.length),
-		);
-		const turn = turns[turnIdx];
-		const f0 = turn.voice.baseHz;
-		const syllableRate = 4.6;
-		const sylEnv = Math.max(0, Math.sin(Math.PI * ((t * syllableRate) % 1)));
-		const pitchMod = 1 + 0.06 * Math.sin(2 * Math.PI * 1.7 * t);
-		const f = f0 * pitchMod;
-		const sig =
-			(0.55 * Math.sin(2 * Math.PI * f * t) +
-				0.28 * Math.sin(2 * Math.PI * f * 2 * t) +
-				0.14 * Math.sin(2 * Math.PI * f * 3 * t)) *
-			sylEnv *
-			0.45;
-		view.setInt16(44 + i * 2, Math.round(Math.max(-0.95, Math.min(0.95, sig)) * 32767), true);
-	}
-
-	const bytes = new Uint8Array(buffer);
-	let bin = "";
-	for (let i = 0; i < bytes.length; i += 4096) {
-		bin += String.fromCharCode(
-			...Array.from(bytes.subarray(i, Math.min(i + 4096, bytes.length))),
-		);
-	}
-	const dataUrl = `data:audio/wav;base64,${btoa(bin)}`;
-	const tag = multiSpeaker ? `${v1.id}-${v2.id}` : v1.id;
-	const file = new File([buffer], `voces-ultra-${tag.toLowerCase()}.wav`, {
-		type: "audio/wav",
+	rate?: number;
+	pitch?: number;
+}): Promise<{ file: File; url: string; duration: number }> {
+	const resp = await fetch(TTS_API_URL, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({
+			text: script,
+			engine,
+			voice,
+			voice2: voice2 || voice,
+			multiSpeaker,
+			rate,
+			pitch,
+		}),
 	});
-	return { file, dataUrl, duration: totalSec };
+	if (!resp.ok) {
+		const data = await resp.json().catch(() => ({}));
+		throw new Error(data.error || `El motor ${engine} falló (${resp.status})`);
+	}
+	const blob = await resp.blob();
+	const url = URL.createObjectURL(blob);
+	const duration = await new Promise<number>((resolve) => {
+		const audio = new Audio();
+		audio.preload = "metadata";
+		audio.onloadedmetadata = () =>
+			resolve(Number.isFinite(audio.duration) ? audio.duration : 0);
+		audio.onerror = () => resolve(0);
+		audio.src = url;
+	});
+	const tag = (multiSpeaker ? `${voice}-${voice2 || voice}` : voice)
+		.toLowerCase()
+		.replace(/[^a-z0-9]+/g, "-")
+		.replace(/^-|-$/g, "")
+		.slice(0, 40);
+	const file = new File([blob], `voz-${engine}-${tag || "locucion"}.mp3`, {
+		type: blob.type || "audio/mpeg",
+	});
+	return { file, url, duration: Math.round(duration * 100) / 100 };
 }
 
 async function generateCinematicAiImageFile({
@@ -766,21 +758,30 @@ export function OpenCutNervBridge() {
 			},
 			addAiVoiceToTimeline: async (opts?: {
 				script?: string;
+				engine?: string;
 				voice1Id?: string;
 				voice2Id?: string;
 				multiSpeaker?: boolean;
+				rate?: number;
+				pitch?: number;
 				addSubtitle?: boolean;
 			}) => {
-				const { file, duration } = synthesizeUltraVoiceWavFile({
+				const engine = opts?.engine || "edge";
+				const { file, duration } = await synthesizeVoiceFile({
 					script:
 						opts?.script ||
-						"Kore: Bienvenidos al estudio multimodal de OpenCut y NERV.\nPuck: Todo queda sincronizado en la línea de tiempo.",
-					voice1Id: opts?.voice1Id || "Kore",
-					voice2Id: opts?.voice2Id || "Puck",
-					multiSpeaker: opts?.multiSpeaker !== false,
+						"Bienvenidos al estudio de OpenCut. Todo queda sincronizado en la línea de tiempo.",
+					engine,
+					voice:
+						opts?.voice1Id || (engine === "edge" ? "es-MX-DaliaNeural" : ""),
+					voice2:
+						opts?.voice2Id || (engine === "edge" ? "es-MX-JorgeNeural" : ""),
+					multiSpeaker: opts?.multiSpeaker === true,
+					rate: opts?.rate,
+					pitch: opts?.pitch,
 				});
 				const assets = await addFileToProjectAndTimeline(file, true);
-				if (opts?.addSubtitle !== false) {
+				if (opts?.addSubtitle === true) {
 					const startTime = editor.playback.getCurrentTime();
 					const textEl = buildTextElement({
 						raw: {
@@ -876,13 +877,56 @@ export function AiStudioView() {
 	const [musicDuration, setMusicDuration] = useState(8);
 	const [previewAudioUrl, setPreviewAudioUrl] = useState<string | null>(null);
 
-	// 4. Voces Ultra (Google AI Studio · 30 Voces)
-	const [voiceMulti, setVoiceMulti] = useState(true);
-	const [voice1, setVoice1] = useState("Kore");
-	const [voice2, setVoice2] = useState("Charon");
+	// 4. Voces: motores TTS reales servidos por /api/tts
+	const [voiceMulti, setVoiceMulti] = useState(false);
+	const [voiceEngine, setVoiceEngine] = useState("edge");
+	const [ttsEngines, setTtsEngines] = useState<TtsEngineInfo[]>([]);
+	const [ttsEnginesError, setTtsEnginesError] = useState<string | null>(null);
+	const [voice1, setVoice1] = useState("es-MX-DaliaNeural");
+	const [voice2, setVoice2] = useState("es-MX-JorgeNeural");
+	const [voiceRate, setVoiceRate] = useState(0);
+	const [voicePitch, setVoicePitch] = useState(0);
+	const [voiceAddSubtitle, setVoiceAddSubtitle] = useState(false);
+	const [voicePreviewUrl, setVoicePreviewUrl] = useState<string | null>(null);
 	const [voiceScript, setVoiceScript] = useState(
-		"Kore: Observa cómo la estrella colapsa en cámara lenta formando una onda luminosa perfecta.\nCharon: Detrás del asombro visual opera la ley física de conservación del momento y la gravedad extrema.",
+		"Ay, mijo, pues Dios lo hizo todo.\n¿Y eso cómo lo sabe?\nSaberlo, saberlo, no. Lo creo. Es mi fe.",
 	);
+	const currentTtsEngine = useMemo(
+		() => ttsEngines.find((e) => e.id === voiceEngine) ?? null,
+		[ttsEngines, voiceEngine],
+	);
+
+	useEffect(() => {
+		if (section !== "voice" || ttsEngines.length > 0) return;
+		let cancelled = false;
+		fetchTtsEngines()
+			.then((engines) => {
+				if (cancelled) return;
+				setTtsEngines(engines);
+				setTtsEnginesError(null);
+			})
+			.catch((err: Error) => {
+				if (!cancelled) setTtsEnginesError(err.message);
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, [section, ttsEngines.length]);
+
+	const selectVoiceEngine = (engineId: string) => {
+		setVoiceEngine(engineId);
+		const info = ttsEngines.find((e) => e.id === engineId);
+		if (info) {
+			setVoice1(info.defaultVoice);
+			setVoice2(info.defaultVoice2);
+		}
+	};
+
+	useEffect(() => {
+		return () => {
+			if (voicePreviewUrl) URL.revokeObjectURL(voicePreviewUrl);
+		};
+	}, [voicePreviewUrl]);
 
 	const masterFlowPrompt = useMemo(
 		() =>
@@ -910,6 +954,7 @@ export function AiStudioView() {
 			if (detail.camera) setVideoCamera(String(detail.camera));
 			if (detail.block)
 				setVideoBlock(detail.block === "bloque2" ? "bloque2" : "bloque1");
+			if (detail.engine) setVoiceEngine(String(detail.engine));
 			if (detail.voice1) setVoice1(String(detail.voice1));
 			if (detail.voice2) setVoice2(String(detail.voice2));
 			if (typeof detail.multiSpeaker === "boolean")
@@ -1189,23 +1234,58 @@ export function AiStudioView() {
 		}
 	};
 
+	const voiceLabel = voiceMulti ? `${voice1} + ${voice2}` : voice1;
+
+	const runVoiceSynthesis = async () => {
+		if (!voiceScript.trim()) {
+			toast.error("Escribe el guion de la voz");
+			return null;
+		}
+		setIsBusy(true);
+		setLastStatus(`Generando voz con ${currentTtsEngine?.label ?? voiceEngine}...`);
+		try {
+			const result = await synthesizeVoiceFile({
+				script: voiceScript,
+				engine: voiceEngine,
+				voice: voice1,
+				voice2,
+				multiSpeaker: voiceMulti,
+				rate: currentTtsEngine?.rate ? voiceRate : 0,
+				pitch: currentTtsEngine?.pitch ? voicePitch : 0,
+			});
+			setVoicePreviewUrl((prev) => {
+				if (prev) URL.revokeObjectURL(prev);
+				return result.url;
+			});
+			setLastStatus(`Voz lista (${voiceLabel} · ${result.duration.toFixed(1)} s)`);
+			return result;
+		} catch (err) {
+			const msg = err instanceof Error ? err.message : String(err);
+			setLastStatus(`Error de voz: ${msg}`);
+			toast.error(msg);
+			return null;
+		} finally {
+			setIsBusy(false);
+		}
+	};
+
+	const handlePreviewVoice = async () => {
+		await runVoiceSynthesis();
+	};
+
 	const handleSynthVoiceToTimeline = async () => {
-		const { file, dataUrl, duration } = synthesizeUltraVoiceWavFile({
-			script: voiceScript,
-			voice1Id: voice1,
-			voice2Id: voice2,
-			multiSpeaker: voiceMulti,
-		});
-		setPreviewAudioUrl(dataUrl);
-		await insertFileIntoTimeline(
-			file,
-			`Locución (${voiceMulti ? `${voice1} + ${voice2}` : voice1} · ${duration}s)`,
-		);
+		const result = await runVoiceSynthesis();
+		if (!result) return;
 		const startTime = editor.playback.getCurrentTime();
+		await insertFileIntoTimeline(
+			result.file,
+			`Locución (${voiceLabel} · ${result.duration.toFixed(1)} s)`,
+		);
+		if (!voiceAddSubtitle) return;
 		const textEl = buildTextElement({
 			raw: {
-				name: `Subtítulo ${voiceMulti ? `${voice1}/${voice2}` : voice1}`,
-				duration: mediaTimeFromSeconds({ seconds: duration }),
+				name: `Subtítulo ${voiceLabel}`,
+				duration: mediaTimeFromSeconds({ seconds: result.duration || 3 }),
 				params: {
 					content: voiceScript.replace(/\n+/g, " · ").slice(0, 95),
 				},
@@ -1561,15 +1641,38 @@ export function AiStudioView() {
 				)}
 
 				{section === "voice" && (
-					<div className="flex flex-col gap-1.5">
+					<div className="flex flex-col gap-1.5" data-opencut-voice-panel>
+						<select
+							data-opencut-ai-voice-engine="engine"
+							value={voiceEngine}
+							onChange={(e) => selectVoiceEngine(e.target.value)}
+							title="Motor de voz"
+							className="border-input bg-background h-7 w-full rounded border px-1 text-[11px]"
+						>
+							{ttsEngines.length === 0 && (
+								<option value={voiceEngine}>
+									{ttsEnginesError ? "Motores no disponibles" : "Cargando motores…"}
+								</option>
+							)}
+							{ttsEngines.map((eng) => (
+								<option key={eng.id} value={eng.id} disabled={!eng.available}>
+									{eng.label} · {eng.available ? eng.kind : "no instalado"}
+								</option>
+							))}
+						</select>
+						{ttsEnginesError && (
+							<p className="text-[10px] text-red-400">{ttsEnginesError}</p>
+						)}
+
 						<div className="flex items-center gap-1">
 							<select
 								data-opencut-ai-voice-a="voice"
 								value={voice1}
 								onChange={(e) => setVoice1(e.target.value)}
+								title={voiceMulti ? "Voz 1" : "Voz"}
 								className="border-input bg-background h-7 min-w-0 flex-1 rounded border px-1 text-[11px]"
 							>
-								{GOOGLE_ULTRA_30_VOICES.map((v) => (
+								{(currentTtsEngine?.voices ?? []).map((v) => (
 									<option key={v.id} value={v.id}>
 										{v.label}
 									</option>
@@ -1580,9 +1683,10 @@ export function AiStudioView() {
 									data-opencut-ai-voice-b="voice"
 									value={voice2}
 									onChange={(e) => setVoice2(e.target.value)}
+									title="Voz 2"
 									className="border-input bg-background h-7 min-w-0 flex-1 rounded border px-1 text-[11px]"
 								>
-									{GOOGLE_ULTRA_30_VOICES.map((v) => (
+									{(currentTtsEngine?.voices ?? []).map((v) => (
 										<option key={v.id} value={v.id}>
 											{v.label}
 										</option>
@@ -1592,26 +1696,89 @@ export function AiStudioView() {
 							<button
 								type="button"
 								onClick={() => setVoiceMulti((v) => !v)}
-								title="Alternar 1 voz / 2 voces"
+								title="Una voz o diálogo de dos voces (un renglón por turno; «Nombre:» al inicio asigna la voz)"
 								className={`border-input h-7 shrink-0 rounded border px-1.5 text-[10px] font-medium ${
 									voiceMulti
 										? "bg-amber-500/20 text-amber-300 border-amber-500/40"
 										: "bg-background text-muted-foreground"
 								}`}
 							>
-								{voiceMulti ? "2 Voces" : "1 Voz"}
+								{voiceMulti ? "2 voces" : "1 voz"}
 							</button>
 						</div>
 
-						<Button
-							size="sm"
-							disabled={isBusy}
-							onClick={handleSynthVoiceToTimeline}
-							data-opencut-action="synth-voice-timeline"
-							className="h-8 w-full bg-amber-600 text-xs font-semibold text-white hover:bg-amber-500"
-						>
-							🎙️ Crear Locución + Subtítulo
-						</Button>
+						{(currentTtsEngine?.rate || currentTtsEngine?.pitch) && (
+							<div className="grid grid-cols-2 gap-2">
+								{currentTtsEngine?.rate && (
+									<label className="flex flex-col gap-0.5 text-[10px] text-muted-foreground">
+										Velocidad {voiceRate > 0 ? "+" : ""}
+										{voiceRate}%
+										<input
+											type="range"
+											min={-50}
+											max={50}
+											step={5}
+											value={voiceRate}
+											onChange={(e) => setVoiceRate(Number(e.target.value))}
+										/>
+									</label>
+								)}
+								{currentTtsEngine?.pitch && (
+									<label className="flex flex-col gap-0.5 text-[10px] text-muted-foreground">
+										Tono {voicePitch > 0 ? "+" : ""}
+										{voicePitch}
+										<input
+											type="range"
+											min={-30}
+											max={30}
+											step={2}
+											value={voicePitch}
+											onChange={(e) => setVoicePitch(Number(e.target.value))}
+										/>
+									</label>
+								)}
+							</div>
+						)}
+
+						<label className="flex items-center gap-1.5 text-[10.5px] text-muted-foreground">
+							<input
+								type="checkbox"
+								checked={voiceAddSubtitle}
+								onChange={(e) => setVoiceAddSubtitle(e.target.checked)}
+							/>
+							Agregar el guion como texto en la línea de tiempo
+						</label>
+
+						{voicePreviewUrl && (
+							<audio
+								controls
+								src={voicePreviewUrl}
+								className="h-8 w-full"
+								data-opencut-voice-preview
+							/>
+						)}
+
+						<div className="grid grid-cols-2 gap-1">
+							<Button
+								size="sm"
+								variant="outline"
+								disabled={isBusy || !currentTtsEngine?.available}
+								onClick={handlePreviewVoice}
+								data-opencut-action="preview-voice"
+								className="h-8 text-[11px]"
+							>
+								{isBusy ? "Generando…" : "▶ Escuchar"}
+							</Button>
+							<Button
+								size="sm"
+								disabled={isBusy || !currentTtsEngine?.available}
+								onClick={handleSynthVoiceToTimeline}
+								data-opencut-action="synth-voice-timeline"
+								className="h-8 bg-amber-600 text-[11px] font-semibold text-white hover:bg-amber-500"
+							>
+								🎙️ Al timeline
+							</Button>
+						</div>
 						<Button
 							size="sm"
 							variant="outline"
