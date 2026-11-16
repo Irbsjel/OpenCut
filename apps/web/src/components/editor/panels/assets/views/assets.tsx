@@ -28,6 +28,9 @@ import {
 import { DEFAULT_NEW_ELEMENT_DURATION } from "@/timeline/creation";
 import { mediaTimeFromSeconds, type MediaTime } from "@/wasm";
 import { useEditor } from "@/editor/use-editor";
+import { extractAndSaveClipLastFrame } from "@/media/extract-last-frame";
+import type { VideoElement } from "@/timeline";
+import { TICKS_PER_SECOND } from "@/wasm";
 import { useFileUpload } from "@/media/use-file-upload";
 import { invokeAction } from "@/actions";
 import { processMediaAssets } from "@/media/processing";
@@ -372,7 +375,33 @@ function MediaItemWithContextMenu({
 	}) => void;
 }) {
 	const { isSelected, selectedIds } = useSelection();
+	const editor = useEditor();
 	const idsToDelete = isSelected(item.id) ? selectedIds : [item.id];
+	const idsToDownload = idsToDelete;
+	const downloadLabel =
+		idsToDownload.length > 1
+			? `Descargar ${idsToDownload.length} archivos`
+			: "Descargar";
+	const downloadAssets = ({ ids }: { ids: string[] }) => {
+		const assets = editor.media.getAssets();
+		ids.forEach((id, index) => {
+			const asset = assets.find((a) => a.id === id);
+			if (!asset) return;
+			const href = asset.file
+				? URL.createObjectURL(asset.file)
+				: asset.url;
+			if (!href) return;
+			setTimeout(() => {
+				const a = document.createElement("a");
+				a.href = href;
+				a.download = asset.name;
+				document.body.appendChild(a);
+				a.click();
+				a.remove();
+				if (asset.file) setTimeout(() => URL.revokeObjectURL(href), 10000);
+			}, index * 250);
+		});
+	};
 	const deleteLabel =
 		idsToDelete.length > 1 ? `Delete ${idsToDelete.length} items` : "Delete";
 
@@ -380,7 +409,29 @@ function MediaItemWithContextMenu({
 		<ContextMenu>
 			<ContextMenuTrigger asChild>{children}</ContextMenuTrigger>
 			<ContextMenuContent>
-				<ContextMenuItem>Export clips</ContextMenuItem>
+				<ContextMenuItem
+					onClick={() => downloadAssets({ ids: idsToDownload })}
+				>
+					{downloadLabel}
+				</ContextMenuItem>
+				{item.type === "video" && (
+					<ContextMenuItem
+						onClick={() =>
+							void extractAndSaveClipLastFrame({
+								editor,
+								element: {
+									mediaId: item.id,
+									name: item.name,
+									trimStart: 0,
+									duration: Math.round((item.duration ?? 0) * TICKS_PER_SECOND),
+								} as unknown as VideoElement,
+								downloadFile: true,
+							})
+						}
+					>
+						Extraer último fotograma
+					</ContextMenuItem>
+				)}
 				<ContextMenuItem
 					variant="destructive"
 					onClick={(event: React.MouseEvent<HTMLDivElement>) =>

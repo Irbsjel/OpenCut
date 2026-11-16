@@ -1,11 +1,11 @@
 "use client";
 
 import { toast } from "sonner";
-import type { useEditor } from "@/editor/use-editor";
+import type { EditorCore } from "@/core";
 import type { VideoElement } from "@/timeline";
 import { TICKS_PER_SECOND } from "@/wasm";
 
-type EditorInstance = ReturnType<typeof useEditor>;
+type EditorInstance = EditorCore;
 
 export const LAST_FRAME_CONTINUITY_STORAGE_KEY =
 	"opencut_last_frame_continuity_ref";
@@ -90,6 +90,7 @@ export async function extractAndSaveClipLastFrame({
 				resolve();
 			};
 			video.addEventListener("seeked", onSeeked, { once: true });
+			setTimeout(resolve, 4000);
 			video.currentTime = targetSec;
 		});
 

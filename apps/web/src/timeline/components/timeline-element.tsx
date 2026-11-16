@@ -607,6 +607,21 @@ export function TimelineElement({
 							{isExpanded ? "Collapse keyframes" : "Expand keyframes"}
 						</ContextMenuItem>
 					)}
+					{element.type === "video" && (
+						<ContextMenuItem
+							icon={<HugeiconsIcon icon={MagicWand05Icon} />}
+							onClick={(event: React.MouseEvent) => {
+								event.stopPropagation();
+								void extractAndSaveClipLastFrame({
+									editor,
+									element,
+									downloadFile: true,
+								});
+							}}
+						>
+							Extraer último fotograma
+						</ContextMenuItem>
+					)}
 					{selectedElements.length === 1 && hasMediaId(element) && (
 						<>
 							<ContextMenuItem
@@ -617,21 +632,6 @@ export function TimelineElement({
 							>
 								Reveal media
 							</ContextMenuItem>
-							{element.type === "video" && (
-								<ContextMenuItem
-									icon={<HugeiconsIcon icon={MagicWand05Icon} />}
-									onClick={(event: React.MouseEvent) => {
-										event.stopPropagation();
-										void extractAndSaveClipLastFrame({
-											editor,
-											element,
-											downloadFile: true,
-										});
-									}}
-								>
-									Extraer último frame (Continuidad IA)
-								</ContextMenuItem>
-							)}
 							<ContextMenuItem
 								icon={<HugeiconsIcon icon={Exchange01Icon} />}
 								disabled
