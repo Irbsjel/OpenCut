@@ -26,7 +26,11 @@ export function getElementVolume({
 }: {
 	element: AudioCapableElement;
 }): number {
-	const value = element.params.volume;
+	const raw = element as unknown as {
+		params?: { volume?: unknown };
+		volume?: unknown;
+	};
+	const value = raw.params?.volume ?? raw.volume;
 	return typeof value === "number" ? value : 0;
 }
 
@@ -35,7 +39,11 @@ export function isElementMuted({
 }: {
 	element: AudioCapableElement;
 }): boolean {
-	return element.params.muted === true;
+	const raw = element as unknown as {
+		params?: { muted?: unknown };
+		muted?: unknown;
+	};
+	return (raw.params?.muted ?? raw.muted) === true;
 }
 
 export function hasAnimatedVolume({
